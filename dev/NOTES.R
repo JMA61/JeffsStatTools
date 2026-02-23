@@ -70,6 +70,8 @@ usethis::use_build_ignore("dev")
 #install the gitHub to connect the local package to the GitHub website
 usethis::use_git()
 
-
+#Before doing so, run this to set GitHub credentials
+usethis::use_git_config(user.name = "Jeff Ackerman",
+                        user.email = "jmaMedia@outlook.com")
 
 
