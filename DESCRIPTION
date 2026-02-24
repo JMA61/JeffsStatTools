@@ -1,16 +1,22 @@
 Package: JeffsStatTools
 Title: SPSS-Style Descriptive, Frequency, and Regression Tools for Teaching
-Version: 0.1.0
-Authors@R: 
+Version: 0.2.0
+Authors@R:
     person("Jeff", "Ackerman", , "SurveyCentre@griffith.edu.au", role = c("aut", "cre"))
 Description: Provides SPSS-like descriptive statistics, frequency tables,
-    and regression output. Designed to work with unquoted variable names for ease of use.
+    and linear regression output. Functions accept unquoted
+    variable names for ease of use and return results invisibly while
+    printing user-friendly tables.
 License: MIT + file LICENSE
 Encoding: UTF-8
+Depends:
+    R (>= 4.1.0)
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
-Imports: 
+Imports:
     dplyr,
+    haven,
     knitr,
+    labelled,
     purrr,
     rlang

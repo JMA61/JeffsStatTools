@@ -74,4 +74,93 @@ usethis::use_git()
 usethis::use_git_config(user.name = "Jeff Ackerman",
                         user.email = "jmaMedia@outlook.com")
 
+### There are additional steps - ask Chat GPT - I lost track ###
+
+
+### for the students to install they need to run this ###
+
+# Install the pak package once (if you don't already have it)
+install.packages("pak")
+
+# Install the latest version of JeffsStatTools from GitHub
+pak::pkg_install("JMA61/JeffsStatTools")
+
+# Load the package
+library(JeffsStatTools)
+
+# Example
+jdesc(mtcars, mpg, hp)
+
+# To install a specific version (recommended if instructed)
+pak::pkg_install("JMA61/JeffsStatTools@v0.1.0")
+
+# for package overview - nothing here yet.
+?JeffsStatTools
+
+# for package help - nothing here yet
+help(package = "JeffsStatTools")
+
+# help for a particular function - does have some info.
+?jdesc
+
+packageDescription("JeffsStatTools")
+packageVersion("JeffsStatTools")
+
+# which functions exist
+ls("package:JeffsStatTools")
+
+# code for the function
+JeffsStatTools::jdesc
+
+# run an automatic example from the roxygen documentation.
+example(jdesc)
+
+
+## This will update all installed package
+update.packages(ask = FALSE, checkBuilt = TRUE)
+
+
+################################################################
+################################################################
+################## To Update the Package #######################
+
+
+# 1) Add a new function at the bottom of the 7036Tools.R file
+# 2) Use ChatGPT to tweak that function to provide proper ROxygen information at that top
+# 3) ChatGPT can also tweak the external library calls to calling explicit namespaces (libraries)
+# 4) run code (in the console) like this to update the package's knowledge of any new external libraries
+usethis::use_package("haven")
+usethis::use_package("labelled")
+
+# 5) Run this code to rebuild the docs and run a check
+# paste it into ChatGPT and ask it to check things over for anything that needs altered
+devtools::document()
+devtools::check()
+
+# 6) In the terminal run this - note the change to the version number:
+
+# To Commit the new version:
+git add -A
+git commit -m "Release version 0.2.0 (add jfreq and jlm)"
+
+# To Push/Upload to GitHub
+git push
+
+# To create the version tag
+git tag -a v0.2.0 -m "Version 0.2.0"
+git push --tags
+
+# Verity that the tag exists:
+git tag
+
+
+
+### Students (and me) will install the latest version with:
+pak::pkg_install("JMA61/JeffsStatTools")
+
+
+
+
+
+
 
