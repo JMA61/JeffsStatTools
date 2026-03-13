@@ -3,4 +3,6 @@
 export(jdesc)
 export(jfreq)
 export(jlm)
+import(dplyr)
+importFrom(magrittr,"%>%")
 importFrom(rlang,.data)

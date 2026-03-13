@@ -79,29 +79,47 @@ usethis::use_git_config(user.name = "Jeff Ackerman",
 
 ### for the students to install they need to run this ###
 
-# Install the pak package once (if you don't already have it)
-install.packages("pak")
 
-# Install the latest version of JeffsStatTools from GitHub
-pak::pkg_install("JMA61/JeffsStatTools")
+##########################################
+## ===================================
+## 7036CCJ JeffsStatTools Installation
+## ===================================
+# Install remotes package that permits the install of a custom package
+# Comment out the next line after successfully running once
+install.packages("remotes")
 
-# Load the package
+# Install JeffsStatTools from GitHub
+# Comment out the next line after successfully running once
+remotes::install_github("JMA61/JeffsStatTools@v0.2.0")
+
+# ------------------------------------------------------------
+# Load JeffsStatTools automatically every time this project opens
+# Place into .Rprofile to load the library each time R Studio starts
+# Do not comment out this next line
+# ------------------------------------------------------------
 library(JeffsStatTools)
 
-# Example
-jdesc(mtcars, mpg, hp)
+# Current functions available:
+# jdesc()  - Descriptive statistics
+# jfreq()  - Frequency tables
+# jlm()    - Regression output
 
-# To install a specific version (recommended if instructed)
-pak::pkg_install("JMA61/JeffsStatTools@v0.1.0")
+## To open help files ##
+# ?jdesc
+# ?jfreq
+# ?jlm
+#######################
 
-# for package overview - nothing here yet.
-?JeffsStatTools
+## Examples ##
+# jdesc(mtcars, mpg)
+# jfreq(mtcars, cyl, gear)
+# jlm(mpg ~ wt, data = mtcars)
+#######################
 
-# for package help - nothing here yet
-help(package = "JeffsStatTools")
 
-# help for a particular function - does have some info.
-?jdesc
+############ End of Install Instructions ################
+
+
 
 packageDescription("JeffsStatTools")
 packageVersion("JeffsStatTools")
@@ -132,22 +150,32 @@ update.packages(ask = FALSE, checkBuilt = TRUE)
 usethis::use_package("haven")
 usethis::use_package("labelled")
 
+# NOTE:
+# Only run use_package() when a NEW dependency is added.
+# Do not run it every time you update the package.
+
+#4b Make sure devtools is installed on local machine
+# install.packages("devtools")
+# library(devtools)
+
+
 # 5) Run this code to rebuild the docs and run a check
 # paste it into ChatGPT and ask it to check things over for anything that needs altered
 devtools::document()
 devtools::check()
 
+
 # 6) In the terminal run this - note the change to the version number:
 
 # To Commit the new version:
 git add -A
-git commit -m "Release version 0.2.0 (add jfreq and jlm)"
+git commit -m "Update dependencies and bump version to 0.2.1"
 
 # To Push/Upload to GitHub
 git push
 
 # To create the version tag
-git tag -a v0.2.0 -m "Version 0.2.0"
+git tag -a v0.2.1 -m "Version 0.2.1"
 git push --tags
 
 # Verity that the tag exists:
@@ -156,7 +184,11 @@ git tag
 
 
 ### Students (and me) will install the latest version with:
-pak::pkg_install("JMA61/JeffsStatTools")
+remotes::install_github("JMA61/JeffsStatTools")
+
+# If I wanted to install immediately on my local machine, I could add:
+#   devtools::install()
+# right after  devtools::check()
 
 
 
