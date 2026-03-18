@@ -18,22 +18,31 @@
 jdesc <- function(data, ...) {
   variables <- rlang::enquos(...)
   variable_names <- purrr::map_chr(variables, rlang::quo_name)
-
   descriptives_list <- lapply(variables, function(var) {
     var_name <- rlang::quo_name(var)
     var_data <- rlang::eval_tidy(var, data)
-    if (inherits(var_data, "haven_labelled")) {
+    if (inherits(var_data, "haven_labelled") || inherits(var_data, "labelled") || !is.null(attr(var_data, "labels"))) {
       var_data <- as.numeric(vctrs::vec_data(var_data))
     }
 
 
+    if (is.factor(var_data)) {
+      numeric_check <- suppressWarnings(as.numeric(as.character(var_data)))
+      if (all(is.na(numeric_check[!is.na(var_data)]))) {
+        warning(paste0("'", var_name,
+                       "' is a factor with text categories and cannot be summarised ",
+                       "with descriptive statistics. Use jfreq() instead for ",
+                       "categorical variables."), call. = FALSE)
+        return(NULL)
+      }
+      var_data <- numeric_check
+    }
     total_cases <- length(var_data)
     non_missing_cases <- sum(!is.na(var_data))
     min_val <- round(min(var_data, na.rm = TRUE), 3)
     max_val <- round(max(var_data, na.rm = TRUE), 3)
     mean_val <- round(mean(var_data, na.rm = TRUE), 3)
     sd_val <- round(stats::sd(var_data, na.rm = TRUE), 3)
-
     data.frame(
       Variable = var_name,
       Total = total_cases,
@@ -45,12 +54,10 @@ jdesc <- function(data, ...) {
       stringsAsFactors = FALSE
     )
   })
-
+  descriptives_list <- Filter(Negate(is.null), descriptives_list)
   descriptives <- do.call(rbind, descriptives_list)
-
   # listwise cases (complete across selected variables)
   listwise_cases <- sum(stats::complete.cases(dplyr::select(data, dplyr::all_of(variable_names))))
-
   listwise_row <- data.frame(
     Variable = "Listwise_N",
     Total = NA,
@@ -61,9 +68,7 @@ jdesc <- function(data, ...) {
     SD = NA,
     stringsAsFactors = FALSE
   )
-
   descriptives <- rbind(descriptives, listwise_row)
-
   print(knitr::kable(descriptives, caption = "Descriptive Statistics"))
   invisible(descriptives)
 }

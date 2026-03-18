@@ -91,7 +91,7 @@ install.packages("remotes")
 
 # Install JeffsStatTools from GitHub
 # Comment out the next line after successfully running once
-remotes::install_github("JMA61/JeffsStatTools@v0.2.0")
+remotes::install_github("JMA61/JeffsStatTools")
 
 # ------------------------------------------------------------
 # Load JeffsStatTools automatically every time this project opens
@@ -150,8 +150,8 @@ update.packages(ask = FALSE, checkBuilt = TRUE)
 # 4) run code (in the console) like this to update the package's knowledge of any new external libraries
 
 # This step is outdated.
-usethis::use_package("haven")
-usethis::use_package("labelled")
+#usethis::use_package("haven")
+#usethis::use_package("labelled")
 
 # NOTE:
 # Only run use_package() when a NEW dependency is added.
@@ -164,24 +164,25 @@ usethis::use_package("labelled")
 
 ##########NEW UPDATE INSTRUCTIONS START HERE #################
 
+Remember to change version number below, and in Description file
 
-# 5) Run this code to rebuild the docs and run a check
+# 1) Run this code to rebuild the docs and run a check
 # paste it into ChatGPT and ask it to check things over for anything that needs altered
 devtools::document()
 devtools::check()
 
 
-# 6) In the terminal run this - note the change to the version number:
+# 2) In the terminal run this - note the change to the version number:
 
 # To Commit the new version:
 git add -A
-git commit -m "Update dependencies and bump version to 0.2.2"
+git commit -m "Fix haven_labelled handling in jdesc and bump version to 0.2.3"
 
 # To Push/Upload to GitHub
 git push
 
 # To create the version tag
-git tag -a v0.2.1 -m "Version 0.2.2"
+git tag -a v0.2.3 -m "Version 0.2.3"
 git push --tags
 
 # Verity that the tag exists:
