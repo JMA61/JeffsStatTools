@@ -769,13 +769,13 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
   invisible(model)
 }
 
-
 #' Bivariate correlation matrix with p values and pairwise N
 #'
 #' Computes pairwise correlations and prints a formatted lower-triangle
 #' correlation matrix showing r, p values, and pairwise N for each pair.
 #' Supports Pearson (default), Spearman, and Kendall methods.
 #' Handles haven-labelled and factor variables with numeric levels.
+#' Warns when variables may be categorical rather than continuous.
 #'
 #' @param data A data frame.
 #' @param ... Unquoted variable names within \code{data}.
@@ -796,6 +796,11 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
 jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
   variables <- rlang::enquos(...)
   variable_names <- purrr::map_chr(variables, rlang::quo_name)
+  # Check for minimum number of variables
+  if (length(variable_names) < 2) {
+    stop("jcorr() requires at least 2 variables. Only 1 was provided.", call. = FALSE)
+  }
+
 
   # Validate method
   method <- tolower(method)
@@ -806,9 +811,12 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
   # Extract and prepare data
   cor_data <- data[, variable_names, drop = FALSE]
 
-  # Handle haven-labelled and factor variables
+  # Handle haven-labelled, factor, character, and low-unique numeric variables
   for (v in variable_names) {
     if (haven::is.labelled(cor_data[[v]])) {
+      warning(paste0("'", v, "' is a haven-labelled variable and may be categorical. ",
+                     "Pearson correlations assume continuous/interval data. ",
+                     "Verify this variable is appropriate for correlation."), call. = FALSE)
       cor_data[[v]] <- as.numeric(cor_data[[v]])
     } else if (is.factor(cor_data[[v]])) {
       numeric_check <- suppressWarnings(as.numeric(as.character(cor_data[[v]])))
@@ -817,12 +825,26 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
                     "' is a factor with text categories and cannot be used ",
                     "in a correlation. Use a numeric variable instead."), call. = FALSE)
       }
+      warning(paste0("'", v, "' is a factor with numeric levels and may be categorical. ",
+                     "Pearson correlations assume continuous/interval data. ",
+                     "Verify this variable is appropriate for correlation."), call. = FALSE)
       cor_data[[v]] <- numeric_check
+    } else if (is.character(cor_data[[v]])) {
+      stop(paste0("'", v, "' is a character variable and cannot be used ",
+                  "in a correlation. Use a numeric variable instead."), call. = FALSE)
+    } else if (is.numeric(cor_data[[v]])) {
+      n_unique <- length(unique(cor_data[[v]][!is.na(cor_data[[v]])]))
+      if (n_unique <= 5) {
+        warning(paste0("'", v, "' has only ", n_unique, " unique values and may be categorical. ",
+                       "Pearson correlations assume continuous/interval data. ",
+                       "Verify this variable is appropriate for correlation."), call. = FALSE)
+      }
     }
   }
 
   n_vars <- length(variable_names)
 
+  # Initialize matrices
   r_matrix <- matrix(NA, n_vars, n_vars,
                      dimnames = list(variable_names, variable_names))
   p_matrix <- matrix(NA, n_vars, n_vars,
@@ -830,6 +852,7 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
   n_matrix <- matrix(NA, n_vars, n_vars,
                      dimnames = list(variable_names, variable_names))
 
+  # Compute pairwise correlations
   for (i in seq_len(n_vars)) {
     for (j in seq_len(n_vars)) {
       complete <- stats::complete.cases(cor_data[[i]], cor_data[[j]])
@@ -844,6 +867,7 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
     }
   }
 
+  # Build display table (lower triangle only)
   display <- matrix("", n_vars, n_vars,
                     dimnames = list(variable_names, variable_names))
 
@@ -865,6 +889,7 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
 
   display_df <- as.data.frame(display, stringsAsFactors = FALSE)
 
+  # Method label for caption
   method_label <- switch(method,
                          pearson = "Pearson",
                          spearman = "Spearman",
@@ -885,6 +910,8 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
     method = method
   ))
 }
+
+
 
 
 #' SPSS-like linear regression output with standardised coefficients

@@ -26,6 +26,7 @@ Computes pairwise correlations and prints a formatted lower-triangle
 correlation matrix showing r, p values, and pairwise N for each pair.
 Supports Pearson (default), Spearman, and Kendall methods.
 Handles haven-labelled and factor variables with numeric levels.
+Warns when variables may be categorical rather than continuous.
 }
 \examples{
 jcorr(mtcars, mpg, hp, wt)
