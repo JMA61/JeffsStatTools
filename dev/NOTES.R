@@ -13,19 +13,19 @@ devtools::check()     # this is an optional more thorough check. there will be s
 
 # To Commit the new version:
 git add -A
-git commit -m "v0.4.0: Add jchisq, jalpha, jscreen; add by parameter to jdesc; add paired t-test, Welch options, effect sizes, Levene's test, CIs, and post-hoc tests to jt/jaov; add Spearman/Kendall to jcorr; add vector input to jdesc/jfreq; add variable labels and haven code display across all functions"
-
-
+git commit -m "v0.4.1: Fixed bug where jdesc() using the by= option didn't work with haven labelled variables"
 
 # To Push/Upload to GitHub
 git push
 
 # To create the version tag
-git tag -a v0.4.0 -m "Version 0.4.0"
+git tag -a v0.4.1 -m "Version 0.4.1"
 git push --tags
 
 # Verity that the tag exists:
 git tag
+
+
 
 
 

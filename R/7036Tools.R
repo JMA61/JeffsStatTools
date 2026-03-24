@@ -17,7 +17,6 @@
   }
 }
 
-
 #' Computes basic descriptive statistics (N, non-missing, min, max, mean, SD)
 #' for one or more variables in a data frame. Prints a formatted table and
 #' invisibly returns the underlying results as a data frame.
@@ -78,14 +77,26 @@ jdesc <- function(data, ..., by = NULL, labels = TRUE) {
     }
 
     for (v in variable_names) {
+      # Convert DV to plain numeric BEFORE subsetting
+      dv_data <- data[[v]]
+      if (haven::is.labelled(dv_data)) {
+        dv_data <- as.numeric(dv_data)
+      } else if (is.factor(dv_data)) {
+        dv_data <- suppressWarnings(as.numeric(as.character(dv_data)))
+      } else {
+        dv_data <- as.numeric(dv_data)
+      }
+
+      # Convert grouping variable to character for clean comparison
+      group_var_chr <- as.character(data[[by_name]])
+
       group_rows <- lapply(seq_along(group_levels), function(i) {
         lvl <- group_levels[i]
-        subset_data <- data[[v]][data[[by_name]] == lvl]
-
-        # Handle haven-labelled DV
-        if (haven::is.labelled(subset_data)) {
-          subset_data <- as.numeric(subset_data)
-        }
+        subset_data <- dv_data[group_var_chr == lvl]
+        subset_data <- subset_data[!is.na(subset_data)]
+        n <- length(subset_data)
+        m <- if (n > 0) mean(subset_data) else NA
+        s <- if (n > 0) sd(subset_data) else NA
 
         if (is_labelled_by) {
           group_label <- paste0(original_codes[i], ": ", lvl)
@@ -95,11 +106,11 @@ jdesc <- function(data, ..., by = NULL, labels = TRUE) {
 
         data.frame(
           Group = group_label,
-          N = sum(!is.na(subset_data)),
-          Min = round(min(subset_data, na.rm = TRUE), 3),
-          Max = round(max(subset_data, na.rm = TRUE), 3),
-          Mean = round(mean(subset_data, na.rm = TRUE), 3),
-          SD = round(stats::sd(subset_data, na.rm = TRUE), 3),
+          N = n,
+          Min = if (n > 0) round(min(subset_data), 3) else NA,
+          Max = if (n > 0) round(max(subset_data), 3) else NA,
+          Mean = if (n > 0) round(m, 3) else NA,
+          SD = if (n > 0) round(s, 3) else NA,
           stringsAsFactors = FALSE
         )
       })
