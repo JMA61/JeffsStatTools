@@ -13,7 +13,7 @@ devtools::check()     # this is an optional more thorough check. there will be s
 
 # To Commit the new version:
 git add -A
-git commit -m "v0.4.2: Improved jdesc() and jfreq(0) output"
+git commit -m "v0.4.2: Improved jdesc() and jfreq(0) output and Red titles for all functions"
 
 # To Push/Upload to GitHub
 git push
@@ -28,13 +28,6 @@ git tag
 
 
 
-
-### Students (and me) will install the latest version with:
-remotes::install_github("JMA61/JeffsStatTools")
-
-# If I wanted to install immediately on my local machine, I could add:
-#   devtools::install()
-# right after  devtools::check()
 
 ### To load the functions into the current session use
 devtools::load_all()
