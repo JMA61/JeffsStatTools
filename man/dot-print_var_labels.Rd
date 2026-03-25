@@ -2,11 +2,11 @@
 % Please edit documentation in R/7036Tools.R
 \name{.print_var_labels}
 \alias{.print_var_labels}
-\title{Internal helper function to print variable label legend}
+\title{Internal helper: print variable label legend}
 \usage{
 .print_var_labels(data, var_names)
 }
 \description{
-Internal helper function to print variable label legend
+Used by jt, jaov, jcorr, jchisq, jscreen, and jalpha.
 }
 \keyword{internal}

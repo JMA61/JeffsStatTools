@@ -54,6 +54,10 @@ interval for the mean difference. Handles haven-labelled, numeric, and
 factor grouping variables. For haven-labelled variables, numeric codes
 are displayed alongside labels in the group descriptives table.
 }
+\details{
+A red title identifying the test type is printed first, followed by
+variable labels (if present), then the results tables.
+}
 \examples{
 jt(mpg ~ am, data = mtcars)
 jt(mpg ~ am, data = mtcars, welch = TRUE)

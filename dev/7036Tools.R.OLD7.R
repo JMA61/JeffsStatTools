@@ -1,48 +1,4 @@
-
-# ── Internal helpers ──────────────────────────────────────────────────────────
-
-#' Internal helper: format a class vector for readable display
-#'
-#' Drops the uninformative "vctrs_vctr" class and appends "(Categorical)"
-#' to "haven_labelled" to make the type line more meaningful to the user.
-#'
-#' @keywords internal
-.format_var_type <- function(classes) {
-  is_haven  <- "haven_labelled" %in% classes
-  classes   <- classes[classes != "vctrs_vctr"]
-  type_str  <- paste(classes, collapse = ", ")
-  if (is_haven) type_str <- paste0(type_str, " (Categorical)")
-  type_str
-}
-
-#' Internal helper: print a string in red using ANSI escape codes
-#'
-#' Works in RStudio, most terminals, and R Markdown HTML output.
-#' Falls back to plain text in environments that strip ANSI codes.
-#'
-#' @keywords internal
-.cat_red <- function(x) {
-  cat(paste0("\033[31m", x, "\033[0m"))
-}
-
-#' Internal helper: retrieve a variable label as a string
-#'
-#' Returns the label if present, otherwise the string "None".
-#'
-#' @keywords internal
-.get_var_label_str <- function(x) {
-  vl <- labelled::var_label(x)
-  if (!is.null(vl) && length(vl) > 0 && !is.na(vl[1]) && nzchar(vl[1])) {
-    as.character(vl[1])
-  } else {
-    "None"
-  }
-}
-
-#' Internal helper: print variable label legend
-#'
-#' Used by jt, jaov, jcorr, jchisq, jscreen, and jalpha.
-#'
+#' Internal helper function to print variable label legend
 #' @keywords internal
 .print_var_labels <- function(data, var_names) {
   label_lines <- c()
@@ -61,55 +17,23 @@
   }
 }
 
-#' Internal helper: print a knitr::kable table without extra leading blank lines
-#'
-#' knitr::kable() can prepend one or more newlines to its output (especially
-#' when a caption is used), which causes unwanted extra blank lines in console
-#' output. This wrapper strips any such leading newlines before printing, so
-#' callers can control vertical spacing precisely with explicit cat() calls.
-#'
-#' @keywords internal
-.print_kable <- function(...) {
-  tbl     <- knitr::kable(...)
-  tbl_str <- paste(as.character(tbl), collapse = "\n")
-  tbl_str <- sub("^\n+", "", tbl_str)
-  cat(tbl_str)
-  cat("\n")
-}
-
-
-# ── jdesc ─────────────────────────────────────────────────────────────────────
-
-#' Descriptive statistics for one or more variables
-#'
 #' Computes basic descriptive statistics (N, non-missing, min, max, mean, SD)
 #' for one or more variables in a data frame. Prints a formatted table and
 #' invisibly returns the underlying results as a data frame.
 #'
-#' Output is structured consistently with \code{jfreq()}: a red title is
-#' printed first, followed by a block showing the type and variable label
-#' (or "None" if no label is present) for each variable, then a single blank
-#' line before the table. For multiple variables, one type/label entry is
-#' printed per variable before the shared table.
-#'
 #' Handles haven-labelled, factor, and plain numeric variables. If a factor
 #' with text categories is passed, a warning is issued directing the user
-#' to \code{jfreq()} instead. Also accepts a simple numeric vector. Supports
+#' to jfreq() instead. Also accepts a simple numeric vector. Supports
 #' grouped descriptives via the \code{by} parameter.
-#'
-#' Haven-labelled variables are reported as \code{haven_labelled (Categorical)}
-#' in the type line; the uninformative \code{vctrs_vctr} class is suppressed.
 #'
 #' @param data A data frame, or a numeric vector.
 #' @param ... Unquoted variable names within \code{data} (ignored if data is a vector).
 #' @param by An optional unquoted grouping variable name. When provided,
-#'   descriptives are computed separately for each group, with a separate
-#'   titled table per dependent variable.
-#' @param labels Logical. If \code{TRUE} (default), prints the variable type
-#'   and label (or "None") for each variable before the table.
+#'   descriptives are computed separately for each group.
+#' @param labels Logical. If TRUE (default), prints variable labels
+#'   when available.
 #'
-#' @return Invisibly returns a data frame of descriptive statistics. Also
-#'   prints a formatted table to the console.
+#' @return Invisibly returns a data frame of descriptive statistics. Also prints a table.
 #'
 #' @examples
 #' jdesc(mtcars, mpg)
@@ -118,39 +42,29 @@
 #' jdesc(mtcars, mpg, by = am)
 #'
 #' @export
+#'
 jdesc <- function(data, ..., by = NULL, labels = TRUE) {
-
   # Handle vector input
   if (is.atomic(data) && !is.data.frame(data)) {
     var_name <- deparse(substitute(data))
-    temp_df  <- data.frame(x = data)
+    temp_df <- data.frame(x = data)
     names(temp_df) <- var_name
     return(jdesc(temp_df, !!rlang::sym(var_name), labels = FALSE))
   }
 
-  variables      <- rlang::enquos(...)
+  variables <- rlang::enquos(...)
   variable_names <- purrr::map_chr(variables, rlang::quo_name)
-  by_quo         <- rlang::enquo(by)
+  by_quo <- rlang::enquo(by)
 
-  # ── Grouped descriptives ────────────────────────────────────────────────────
+  # ── Grouped descriptives ────────────────────────────────────────
   if (!rlang::quo_is_null(by_quo)) {
     by_name <- rlang::quo_name(by_quo)
-    by_var  <- data[[by_name]]
+    by_var <- data[[by_name]]
 
-    # Capture original class and label BEFORE any conversion
-    original_by_class <- class(by_var)
-    original_by_label <- .get_var_label_str(by_var)
-    original_dv_info  <- stats::setNames(
-      lapply(variable_names, function(v) {
-        list(class = class(data[[v]]),
-             label = .get_var_label_str(data[[v]]))
-      }),
-      variable_names
-    )
-
+    # Capture haven codes before conversion
     is_labelled_by <- haven::is.labelled(by_var)
     if (is_labelled_by) {
-      original_codes  <- sort(unique(as.numeric(by_var[!is.na(by_var)])))
+      original_codes <- sort(unique(as.numeric(by_var[!is.na(by_var)])))
       data[[by_name]] <- haven::as_factor(by_var)
     } else if (!is.factor(data[[by_name]])) {
       data[[by_name]] <- factor(data[[by_name]])
@@ -158,19 +72,12 @@ jdesc <- function(data, ..., by = NULL, labels = TRUE) {
 
     group_levels <- levels(data[[by_name]])
 
+    if (labels) {
+      .print_var_labels(data, c(variable_names, by_name))
+    }
+
     for (v in variable_names) {
-      .cat_red(paste0("Descriptive Statistics: ", v, " by ", by_name, "\n"))
-
-      if (labels) {
-        cat(v, "\n", sep = "")
-        cat("  Type: ", .format_var_type(original_dv_info[[v]]$class), "\n", sep = "")
-        cat("  Variable label: ", original_dv_info[[v]]$label, "\n", sep = "")
-        cat(by_name, "\n", sep = "")
-        cat("  Type: ", .format_var_type(original_by_class), "\n", sep = "")
-        cat("  Variable label: ", original_by_label, "\n", sep = "")
-      }
-      cat("\n")
-
+      # Convert DV to plain numeric BEFORE subsetting
       dv_data <- data[[v]]
       if (haven::is.labelled(dv_data)) {
         dv_data <- as.numeric(dv_data)
@@ -180,59 +87,55 @@ jdesc <- function(data, ..., by = NULL, labels = TRUE) {
         dv_data <- as.numeric(dv_data)
       }
 
+      # Convert grouping variable to character for clean comparison
       group_var_chr <- as.character(data[[by_name]])
 
       group_rows <- lapply(seq_along(group_levels), function(i) {
-        lvl         <- group_levels[i]
+        lvl <- group_levels[i]
         subset_data <- dv_data[group_var_chr == lvl]
         subset_data <- subset_data[!is.na(subset_data)]
         n <- length(subset_data)
         m <- if (n > 0) mean(subset_data) else NA
-        s <- if (n > 0) sd(subset_data)   else NA
+        s <- if (n > 0) sd(subset_data) else NA
 
-        group_label <- if (is_labelled_by) {
-          paste0(original_codes[i], ": ", lvl)
+        if (is_labelled_by) {
+          group_label <- paste0(original_codes[i], ": ", lvl)
         } else {
-          lvl
+          group_label <- lvl
         }
 
         data.frame(
           Group = group_label,
-          N     = n,
-          Min   = if (n > 0) round(min(subset_data), 3) else NA,
-          Max   = if (n > 0) round(max(subset_data), 3) else NA,
-          Mean  = if (n > 0) round(m, 3) else NA,
-          SD    = if (n > 0) round(s, 3) else NA,
+          N = n,
+          Min = if (n > 0) round(min(subset_data), 3) else NA,
+          Max = if (n > 0) round(max(subset_data), 3) else NA,
+          Mean = if (n > 0) round(m, 3) else NA,
+          SD = if (n > 0) round(s, 3) else NA,
           stringsAsFactors = FALSE
         )
       })
       group_table <- do.call(rbind, group_rows)
 
-      .print_kable(group_table, row.names = FALSE)
+      cat("\n")
+      print(knitr::kable(group_table,
+                         caption = paste("Descriptives:", v, "by", by_name),
+                         row.names = FALSE))
       cat("\n")
     }
     return(invisible(NULL))
   }
 
-  # ── Standard (ungrouped) descriptives ──────────────────────────────────────
-
-  # Capture original class and label info BEFORE any conversion
-  original_var_info <- stats::setNames(
-    lapply(variable_names, function(v) {
-      list(class = class(data[[v]]),
-           label = .get_var_label_str(data[[v]]))
-    }),
-    variable_names
-  )
-
+  # ── Standard (ungrouped) descriptives ───────────────────────────
   descriptives_list <- lapply(variables, function(var) {
     var_name <- rlang::quo_name(var)
     var_data <- rlang::eval_tidy(var, data)
 
+    # Handle haven-labelled variables
     if (haven::is.labelled(var_data)) {
       var_data <- as.numeric(var_data)
     }
 
+    # Handle factor variables
     if (is.factor(var_data)) {
       numeric_check <- suppressWarnings(as.numeric(as.character(var_data)))
       if (all(is.na(numeric_check[!is.na(var_data)]))) {
@@ -245,80 +148,62 @@ jdesc <- function(data, ..., by = NULL, labels = TRUE) {
       var_data <- numeric_check
     }
 
+    total_cases <- length(var_data)
+    non_missing_cases <- sum(!is.na(var_data))
+    min_val <- round(min(var_data, na.rm = TRUE), 3)
+    max_val <- round(max(var_data, na.rm = TRUE), 3)
+    mean_val <- round(mean(var_data, na.rm = TRUE), 3)
+    sd_val <- round(stats::sd(var_data, na.rm = TRUE), 3)
     data.frame(
-      Variable    = var_name,
-      Total       = length(var_data),
-      Non_missing = sum(!is.na(var_data)),
-      Min         = round(min(var_data, na.rm = TRUE), 3),
-      Max         = round(max(var_data, na.rm = TRUE), 3),
-      Mean        = round(mean(var_data, na.rm = TRUE), 3),
-      SD          = round(stats::sd(var_data, na.rm = TRUE), 3),
+      Variable = var_name,
+      Total = total_cases,
+      Non_missing = non_missing_cases,
+      Min = min_val,
+      Max = max_val,
+      Mean = mean_val,
+      SD = sd_val,
       stringsAsFactors = FALSE
     )
   })
-
   descriptives_list <- Filter(Negate(is.null), descriptives_list)
-  descriptives      <- do.call(rbind, descriptives_list)
-
-  listwise_cases <- sum(
-    stats::complete.cases(dplyr::select(data, dplyr::all_of(variable_names)))
-  )
+  descriptives <- do.call(rbind, descriptives_list)
+  # listwise cases (complete across selected variables)
+  listwise_cases <- sum(stats::complete.cases(dplyr::select(data, dplyr::all_of(variable_names))))
   listwise_row <- data.frame(
-    Variable    = "Listwise_N",
-    Total       = NA,
+    Variable = "Listwise_N",
+    Total = NA,
     Non_missing = listwise_cases,
-    Min         = NA,
-    Max         = NA,
-    Mean        = NA,
-    SD          = NA,
+    Min = NA,
+    Max = NA,
+    Mean = NA,
+    SD = NA,
     stringsAsFactors = FALSE
   )
   descriptives <- rbind(descriptives, listwise_row)
 
-  # ── Print: title → type/label block → single blank line → table ────────────
-  .cat_red("Descriptive Statistics\n")
-
   if (labels) {
-    for (v in variable_names) {
-      cat(v, "\n", sep = "")
-      cat("  Type: ", .format_var_type(original_var_info[[v]]$class), "\n", sep = "")
-      cat("  Variable label: ", original_var_info[[v]]$label, "\n", sep = "")
-    }
+    .print_var_labels(data, variable_names)
   }
 
-  cat("\n")
-  .print_kable(descriptives)
+  print(knitr::kable(descriptives, caption = "Descriptive Statistics"))
   invisible(descriptives)
 }
 
 
-# ── jfreq ─────────────────────────────────────────────────────────────────────
-
-#' SPSS-like frequency tables for categorical variables
+#' SPSS-like frequencies for categorical variables
 #'
-#' Prints an SPSS-style frequency table (Freq, Total \%, Valid \%, Cum. \%) for
-#' each variable supplied. Designed for use with unquoted variable names, and
-#' also accepts a plain vector.
-#'
-#' Output is structured consistently with \code{jdesc()}: a red title
-#' ("Frequencies for \emph{varname}") is printed first, followed by the
-#' variable type and variable label (or "None" if absent), then a single blank
-#' line before the table. One complete block is printed per variable.
-#'
-#' For haven-labelled variables, value labels and numeric codes are combined
-#' in the frequency table rows (e.g. \code{1: Strongly Oppose}). The type
-#' line reports \code{haven_labelled (Categorical)} and suppresses the
-#' uninformative \code{vctrs_vctr} class. Variable labels are shown for all
-#' variable types, not only haven-labelled ones.
+#' Prints SPSS-style frequency tables (Freq, Total %, Valid %, Cum. %) for one or
+#' more variables in a data frame. Designed for use with unquoted
+#' variable names. If a variable is a haven labelled vector, value labels and
+#' the variable label (if present) are shown. Also accepts a simple vector.
 #'
 #' @param data A data frame, or a vector.
-#' @param ... Unquoted variable name(s) within \code{data} (ignored if
-#'   \code{data} is a vector).
-#' @param labels Logical. If \code{TRUE} (default), prints the variable type
-#'   and label (or "None") beneath the title.
+#' @param ... Unquoted variable name(s) within \code{data} (ignored if data is a vector).
+#' @param labels Logical. If TRUE (default), prints variable labels
+#'   when available.
 #'
 #' @return Invisibly returns a named list of data frames (one per variable)
-#'   containing the frequency table.
+#' containing the frequency table.
 #'
 #' @examples
 #' jfreq(mtcars, cyl, gear)
@@ -327,36 +212,37 @@ jdesc <- function(data, ..., by = NULL, labels = TRUE) {
 #' @export
 #' @importFrom rlang .data
 jfreq <- function(data, ..., labels = TRUE) {
-
   # Handle vector input
   if (is.atomic(data) && !is.data.frame(data)) {
     var_name <- deparse(substitute(data))
-    temp_df  <- data.frame(x = data)
+    temp_df <- data.frame(x = data)
     names(temp_df) <- var_name
     return(jfreq(temp_df, !!rlang::sym(var_name), labels = FALSE))
   }
 
   variables <- rlang::enquos(...)
-  results   <- list()
+
+  results <- list()
 
   for (variable in variables) {
     variable_name <- rlang::quo_name(variable)
 
-    # Capture class and label BEFORE any conversion
-    temp_var      <- dplyr::pull(data, !!variable)
-    var_class     <- class(temp_var)
-    var_label_val <- .get_var_label_str(data[[variable_name]])
+    # Pull column as a vector
+    temp_var <- dplyr::pull(data, !!variable)
+    var_class <- class(temp_var)
 
-    # Haven-labelled: combine numeric codes with value labels
+    # If haven labelled, combine codes + labels for display and show variable label
+    var_label <- NULL
     if (haven::is.labelled(temp_var)) {
       label_text <- as.character(haven::as_factor(temp_var))
-      codes      <- as.numeric(temp_var)
-      temp_var   <- factor(
-        ifelse(is.na(codes), NA, paste(codes, label_text, sep = ": "))
-      )
+      codes <- as.numeric(temp_var)
+      temp_var <- factor(ifelse(is.na(codes), NA, paste(codes, label_text, sep = ": ")))
+
+      # Variable label (if present)
+      var_label <- labelled::var_label(data[[variable_name]])
     }
 
-    # Convert plain numeric to factor for counting
+    # Convert numeric variables to factors
     if (is.numeric(temp_var)) {
       temp_var <- factor(temp_var)
     }
@@ -365,64 +251,48 @@ jfreq <- function(data, ..., labels = TRUE) {
     freq_table <- data.frame(temp_var = temp_var, stringsAsFactors = FALSE) |>
       dplyr::count(temp_var, name = "Freq")
 
+    # Percentages
     total_count <- length(temp_var)
     valid_count <- sum(!is.na(temp_var))
 
     freq_table <- freq_table |>
       dplyr::mutate(
         `Total %` = (.data$Freq / total_count) * 100,
-        `Valid %` = ifelse(
-          is.na(.data$temp_var),
+        `Valid %` = ifelse(is.na(temp_var), NA_real_, (.data$Freq / valid_count) * 100),
+        `Cum. %`  = ifelse(
+          is.na(temp_var),
           NA_real_,
-          (.data$Freq / valid_count) * 100
-        ),
-        `Cum. %` = ifelse(
-          is.na(.data$temp_var),
-          NA_real_,
-          cumsum(ifelse(is.na(.data$temp_var), 0,
-                        (.data$Freq / valid_count) * 100))
+          cumsum(ifelse(is.na(temp_var), 0, (.data$Freq / valid_count) * 100))
         )
       )
 
+    # Store for invisible return
     results[[variable_name]] <- freq_table
 
-    # ── Print: title → type → label → single blank line → table ────────────
-    max_length      <- suppressWarnings(
-      max(nchar(as.character(freq_table$temp_var)), na.rm = TRUE)
-    )
+    # Formatting / printing
+    max_length <- suppressWarnings(max(nchar(as.character(freq_table$temp_var)), na.rm = TRUE))
     first_col_width <- max(max_length, nchar("Category"), na.rm = TRUE)
 
-    .cat_red(paste0("Frequencies for ", variable_name, "\n"))
-
-    if (labels) {
-      cat("Type of variable: ", .format_var_type(var_class), "\n", sep = "")
-      cat("Variable label: ", var_label_val, "\n", sep = "")
+    cat("Frequencies for", variable_name, "\n")
+    cat("Type of variable:", paste(var_class, collapse = ", "), "\n")
+    if (labels && !is.null(var_label) && !is.na(var_label) && nzchar(var_label)) {
+      cat("Variable label:", var_label, "\n")
     }
     cat("\n")
 
-    cat(sprintf("%-*s", first_col_width, ""),
-        "Freq", "Total %", "Valid %", "Cum. %", sep = "\t")
-    cat("\n",
-        strrep("-", first_col_width), "\t",
-        strrep("-", 4), "\t",
-        strrep("-", 7), "\t",
-        strrep("-", 7), "\t",
-        strrep("-", 6),
-        sep = "")
+    cat(sprintf("%-*s", first_col_width, ""), "Freq", "Total %", "Valid %", "Cum. %", sep = "\t")
+    cat("\n", strrep("-", first_col_width), "\t", strrep("-", 4), "\t", strrep("-", 7),
+        "\t", strrep("-", 7), "\t", strrep("-", 6), sep = "")
     cat("\n")
 
     for (i in seq_len(nrow(freq_table))) {
       cat(
         sprintf("%-*s", first_col_width,
-                ifelse(is.na(freq_table$temp_var[i]),
-                       "NA",
-                       as.character(freq_table$temp_var[i]))),
+                ifelse(is.na(freq_table$temp_var[i]), "NA", as.character(freq_table$temp_var[i]))),
         "\t", freq_table$Freq[i],
         "\t", sprintf("%.2f", freq_table$`Total %`[i]),
-        "\t", ifelse(is.na(freq_table$`Valid %`[i]),  "",
-                     sprintf("%.2f", freq_table$`Valid %`[i])),
-        "\t", ifelse(is.na(freq_table$`Cum. %`[i]), "",
-                     sprintf("%.2f", freq_table$`Cum. %`[i])),
+        "\t", ifelse(is.na(freq_table$`Valid %`[i]), "", sprintf("%.2f", freq_table$`Valid %`[i])),
+        "\t", ifelse(is.na(freq_table$`Cum. %`[i]), "", sprintf("%.2f", freq_table$`Cum. %`[i])),
         sep = ""
       )
       cat("\n")
@@ -434,8 +304,6 @@ jfreq <- function(data, ..., labels = TRUE) {
 }
 
 
-# ── jt ────────────────────────────────────────────────────────────────────────
-
 #' Independent samples or paired samples t-test
 #'
 #' Runs a t-test and prints formatted group descriptives and test results.
@@ -445,9 +313,6 @@ jfreq <- function(data, ..., labels = TRUE) {
 #' interval for the mean difference. Handles haven-labelled, numeric, and
 #' factor grouping variables. For haven-labelled variables, numeric codes
 #' are displayed alongside labels in the group descriptives table.
-#'
-#' A red title identifying the test type is printed first, followed by
-#' variable labels (if present), then the results tables.
 #'
 #' @param formula A formula of the form \code{DV ~ Group}.
 #' @param data A data frame containing variables referenced in \code{formula}.
@@ -479,37 +344,35 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
                effect.size = FALSE, levene = FALSE, ci = FALSE,
                labels = TRUE, full = FALSE) {
 
+  # full = TRUE turns on all optional outputs
   if (full) {
     effect.size <- TRUE
-    levene      <- TRUE
-    ci          <- TRUE
+    levene <- TRUE
+    ci <- TRUE
   }
 
-  # Red title — determined before any output
-  if (paired) {
-    .cat_red("Paired Samples T-Test\n")
-  } else if (welch) {
-    .cat_red("Welch's Independent Samples T-Test\n")
-  } else {
-    .cat_red("Independent Samples T-Test\n")
-  }
-
-  terms      <- all.vars(formula)
-  dv_name    <- terms[1]
+  # Extract variable names from the formula
+  terms <- all.vars(formula)
+  dv_name <- terms[1]
   group_name <- terms[2]
 
-  group_var   <- data[[group_name]]
+  # Get the grouping variable
+  group_var <- data[[group_name]]
+
+  # Capture numeric codes before conversion (for haven-labelled variables)
   is_labelled <- haven::is.labelled(group_var)
   if (is_labelled) {
     original_codes <- sort(unique(as.numeric(group_var[!is.na(group_var)])))
   }
 
+  # Convert to factor if needed
   if (is_labelled) {
     data[[group_name]] <- haven::as_factor(group_var)
   } else if (!is.factor(group_var)) {
     data[[group_name]] <- factor(group_var)
   }
 
+  # Check that grouping variable has exactly 2 levels
   n_levels <- nlevels(data[[group_name]])
   if (n_levels != 2) {
     stop(paste0("'", group_name, "' has ", n_levels,
@@ -517,72 +380,81 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
                 "Use jaov() for more than 2 categories."), call. = FALSE)
   }
 
+  # Handle haven-labelled DV
   if (haven::is.labelled(data[[dv_name]])) {
     data[[dv_name]] <- as.numeric(data[[dv_name]])
   }
 
-  levels      <- levels(data[[group_name]])
+  # Get level names
+  levels <- levels(data[[group_name]])
+
+  # Group data
   group1_data <- data[[dv_name]][data[[group_name]] == levels[1]]
   group2_data <- data[[dv_name]][data[[group_name]] == levels[2]]
   group1_data <- group1_data[!is.na(group1_data)]
   group2_data <- group2_data[!is.na(group2_data)]
 
+  # Check equal sizes for paired test
   if (paired && length(group1_data) != length(group2_data)) {
     stop("Paired t-test requires equal sample sizes in both groups.", call. = FALSE)
   }
 
+  # Variable labels
   if (labels) {
     .print_var_labels(data, c(dv_name, group_name))
   }
 
-  # Levene's test
+  # Levene's test (not applicable for paired)
   if (levene && !paired) {
-    group_factor  <- data[[group_name]]
-    dv_vals       <- data[[dv_name]]
-    group_means   <- tapply(dv_vals, group_factor, mean, na.rm = TRUE)
-    abs_devs      <- abs(dv_vals - group_means[group_factor])
-    levene_model  <- stats::aov(abs_devs ~ group_factor)
+    group_factor <- data[[group_name]]
+    dv_vals <- data[[dv_name]]
+    group_means <- tapply(dv_vals, group_factor, mean, na.rm = TRUE)
+    abs_devs <- abs(dv_vals - group_means[group_factor])
+    levene_model <- stats::aov(abs_devs ~ group_factor)
     levene_result <- summary(levene_model)[[1]]
-    levene_f      <- round(levene_result$`F value`[1], 3)
-    levene_p      <- levene_result$`Pr(>F)`[1]
-    levene_p_fmt  <- if (!is.na(levene_p) && levene_p < 0.001) "<.001" else sprintf("%.3f", levene_p)
+    levene_f <- round(levene_result$`F value`[1], 3)
+    levene_p <- levene_result$`Pr(>F)`[1]
+    levene_p_fmt <- if (!is.na(levene_p) && levene_p < 0.001) "<.001" else sprintf("%.3f", levene_p)
 
     levene_table <- data.frame(
       F_value = levene_f,
-      df1     = levene_result$Df[1],
-      df2     = levene_result$Df[2],
+      df1 = levene_result$Df[1],
+      df2 = levene_result$Df[2],
       p_value = levene_p_fmt,
       stringsAsFactors = FALSE,
       row.names = NULL
     )
 
-    .print_kable(levene_table,
-                 caption = "Levene's Test for Homogeneity of Variance",
-                 col.names = c("F", "df1", "df2", "p"),
-                 row.names = FALSE)
+    cat("\n")
+    print(knitr::kable(levene_table,
+                       caption = "Levene's Test for Homogeneity of Variance",
+                       col.names = c("F", "df1", "df2", "p"),
+                       row.names = FALSE))
     cat("\n")
   } else if (levene && paired) {
-    cat("Note: Levene's test is not applicable for paired samples.\n\n")
+    cat("\nNote: Levene's test is not applicable for paired samples.\n\n")
   }
 
-  # Group descriptives
+  # Build group labels
   if (is_labelled) {
     group_labels <- paste0(original_codes, ": ", levels)
   } else {
     group_labels <- levels
   }
 
+  # Group descriptives
   desc_table <- data.frame(
     Group = group_labels,
-    N     = c(length(group1_data), length(group2_data)),
-    Mean  = round(c(mean(group1_data), mean(group2_data)), 3),
-    SD    = round(c(sd(group1_data),   sd(group2_data)),   3),
+    N = c(length(group1_data), length(group2_data)),
+    Mean = round(c(mean(group1_data), mean(group2_data)), 3),
+    SD = round(c(sd(group1_data), sd(group2_data)), 3),
     stringsAsFactors = FALSE
   )
 
-  .print_kable(desc_table,
-               caption = paste("Group Descriptives:", dv_name, "by", group_name),
-               row.names = FALSE)
+  cat("\n")
+  print(knitr::kable(desc_table,
+                     caption = paste("Group Descriptives:", dv_name, "by", group_name),
+                     row.names = FALSE))
   cat("\n")
 
   # Run t-test
@@ -592,42 +464,45 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
     result <- t.test(formula, data = data, var.equal = !welch)
   }
 
+  # Format p value
   p_val <- result$p.value
   p_fmt <- if (!is.na(p_val) && p_val < 0.001) "<.001" else sprintf("%.3f", p_val)
 
+  # Build test results table
   test_table <- data.frame(
-    t               = round(result$statistic, 3),
-    df              = round(result$parameter, 1),
-    p               = p_fmt,
+    t = round(result$statistic, 3),
+    df = round(result$parameter, 1),
+    p = p_fmt,
     Mean_Difference = round(mean(group1_data) - mean(group2_data), 3),
     stringsAsFactors = FALSE,
     row.names = NULL
   )
 
+  # Add CI columns if requested
   if (ci) {
     test_table$CI_Lower <- round(result$conf.int[1], 3)
     test_table$CI_Upper <- round(result$conf.int[2], 3)
   }
 
+  # Set test label
   if (paired) {
-    test_label <- "Paired Samples T-Test Results"
+    test_label <- "Paired Samples T-Test"
   } else if (welch) {
-    test_label <- "Welch's T-Test Results (equal variances not assumed)"
+    test_label <- "Welch's T-Test (equal variances not assumed)"
   } else {
-    test_label <- "Independent Samples T-Test Results (equal variances assumed)"
+    test_label <- "Independent Samples T-Test (equal variances assumed)"
   }
 
   if (ci) {
-    .print_kable(test_table,
-                 caption = test_label,
-                 col.names = c("t", "df", "p", "Mean Difference",
-                               "95% CI Lower", "95% CI Upper"),
-                 row.names = FALSE)
+    print(knitr::kable(test_table,
+                       caption = test_label,
+                       col.names = c("t", "df", "p", "Mean Difference", "95% CI Lower", "95% CI Upper"),
+                       row.names = FALSE))
   } else {
-    .print_kable(test_table,
-                 caption = test_label,
-                 col.names = c("t", "df", "p", "Mean Difference"),
-                 row.names = FALSE)
+    print(knitr::kable(test_table,
+                       caption = test_label,
+                       col.names = c("t", "df", "p", "Mean Difference"),
+                       row.names = FALSE))
   }
 
   # Effect size (Cohen's d)
@@ -640,12 +515,14 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
     s2 <- sd(group2_data)
 
     if (paired) {
+      # Cohen's dz for paired samples
       diffs <- group1_data - group2_data
-      d     <- round(mean(diffs) / sd(diffs), 3)
+      d <- round(mean(diffs) / sd(diffs), 3)
       cat("\nCohen's dz (paired):", d, "\n")
     } else {
+      # Pooled standard deviation for independent samples
       sp <- sqrt(((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2))
-      d  <- round((m1 - m2) / sp, 3)
+      d <- round((m1 - m2) / sp, 3)
       cat("\nCohen's d:", d, "\n")
     }
   }
@@ -653,8 +530,6 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   invisible(result)
 }
 
-
-# ── jaov ──────────────────────────────────────────────────────────────────────
 
 #' One-way ANOVA (traditional or Welch method)
 #'
@@ -666,9 +541,6 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
 #' Handles haven-labelled, numeric, and factor grouping variables.
 #' For haven-labelled variables, numeric codes are displayed alongside
 #' labels in the group descriptives table.
-#'
-#' A red title identifying the test type is printed first, followed by
-#' variable labels (if present), then the results tables.
 #'
 #' @param formula A formula of the form \code{DV ~ Group}.
 #' @param data A data frame containing variables referenced in \code{formula}.
@@ -699,98 +571,100 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
                  effect.size = FALSE, levene = FALSE, ci = FALSE,
                  labels = TRUE, full = FALSE) {
 
+  # full = TRUE turns on all optional outputs
   if (full) {
-    posthoc     <- TRUE
+    posthoc <- TRUE
     effect.size <- TRUE
-    levene      <- TRUE
-    ci          <- TRUE
+    levene <- TRUE
+    ci <- TRUE
   }
 
-  # Red title
-  if (welch) {
-    .cat_red("Welch's One-Way ANOVA\n")
-  } else {
-    .cat_red("One-Way ANOVA\n")
-  }
-
-  terms      <- all.vars(formula)
-  dv_name    <- terms[1]
+  # Extract variable names from the formula
+  terms <- all.vars(formula)
+  dv_name <- terms[1]
   group_name <- terms[2]
 
-  group_var   <- data[[group_name]]
+  # Get the grouping variable
+  group_var <- data[[group_name]]
+
+  # Capture numeric codes before conversion (for haven-labelled variables)
   is_labelled <- haven::is.labelled(group_var)
   if (is_labelled) {
     original_codes <- sort(unique(as.numeric(group_var[!is.na(group_var)])))
   }
 
+  # Convert to factor if needed
   if (is_labelled) {
     data[[group_name]] <- haven::as_factor(group_var)
   } else if (!is.factor(group_var)) {
     data[[group_name]] <- factor(group_var)
   }
 
+  # Handle haven-labelled DV
   if (haven::is.labelled(data[[dv_name]])) {
     data[[dv_name]] <- as.numeric(data[[dv_name]])
   }
 
+  # Variable labels
   if (labels) {
     .print_var_labels(data, c(dv_name, group_name))
   }
 
   # Levene's test
   if (levene) {
-    group_factor  <- data[[group_name]]
-    dv_vals       <- data[[dv_name]]
-    group_means   <- tapply(dv_vals, group_factor, mean, na.rm = TRUE)
-    abs_devs      <- abs(dv_vals - group_means[group_factor])
-    levene_model  <- stats::aov(abs_devs ~ group_factor)
+    group_factor <- data[[group_name]]
+    dv_vals <- data[[dv_name]]
+    group_means <- tapply(dv_vals, group_factor, mean, na.rm = TRUE)
+    abs_devs <- abs(dv_vals - group_means[group_factor])
+    levene_model <- stats::aov(abs_devs ~ group_factor)
     levene_result <- summary(levene_model)[[1]]
-    levene_f      <- round(levene_result$`F value`[1], 3)
-    levene_p      <- levene_result$`Pr(>F)`[1]
-    levene_p_fmt  <- if (!is.na(levene_p) && levene_p < 0.001) "<.001" else sprintf("%.3f", levene_p)
+    levene_f <- round(levene_result$`F value`[1], 3)
+    levene_p <- levene_result$`Pr(>F)`[1]
+    levene_p_fmt <- if (!is.na(levene_p) && levene_p < 0.001) "<.001" else sprintf("%.3f", levene_p)
 
     levene_table <- data.frame(
       F_value = levene_f,
-      df1     = levene_result$Df[1],
-      df2     = levene_result$Df[2],
+      df1 = levene_result$Df[1],
+      df2 = levene_result$Df[2],
       p_value = levene_p_fmt,
       stringsAsFactors = FALSE,
       row.names = NULL
     )
 
-    .print_kable(levene_table,
-                 caption = "Levene's Test for Homogeneity of Variance",
-                 col.names = c("F", "df1", "df2", "p"),
-                 row.names = FALSE)
+    cat("\n")
+    print(knitr::kable(levene_table,
+                       caption = "Levene's Test for Homogeneity of Variance",
+                       col.names = c("F", "df1", "df2", "p"),
+                       row.names = FALSE))
     cat("\n")
   }
 
   # Group descriptives
-  levels    <- levels(data[[group_name]])
+  levels <- levels(data[[group_name]])
   desc_rows <- lapply(seq_along(levels), function(i) {
-    lvl        <- levels[i]
+    lvl <- levels[i]
     group_data <- data[[dv_name]][data[[group_name]] == lvl]
     group_data <- group_data[!is.na(group_data)]
     n <- length(group_data)
     m <- mean(group_data)
     s <- sd(group_data)
 
-    group_label <- if (is_labelled) {
-      paste0(original_codes[i], ": ", lvl)
+    if (is_labelled) {
+      group_label <- paste0(original_codes[i], ": ", lvl)
     } else {
-      lvl
+      group_label <- lvl
     }
 
     row <- data.frame(
       Group = group_label,
-      N     = n,
-      Mean  = round(m, 3),
-      SD    = round(s, 3),
+      N = n,
+      Mean = round(m, 3),
+      SD = round(s, 3),
       stringsAsFactors = FALSE
     )
 
     if (ci) {
-      se     <- s / sqrt(n)
+      se <- s / sqrt(n)
       t_crit <- stats::qt(0.975, df = n - 1)
       row$CI_Lower <- round(m - t_crit * se, 3)
       row$CI_Upper <- round(m + t_crit * se, 3)
@@ -800,16 +674,16 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
   })
   desc_table <- do.call(rbind, desc_rows)
 
+  cat("\n")
   if (ci) {
-    .print_kable(desc_table,
-                 caption = paste("Group Descriptives:", dv_name, "by", group_name),
-                 col.names = c("Group", "N", "Mean", "SD",
-                               "95% CI Lower", "95% CI Upper"),
-                 row.names = FALSE)
+    print(knitr::kable(desc_table,
+                       caption = paste("Group Descriptives:", dv_name, "by", group_name),
+                       col.names = c("Group", "N", "Mean", "SD", "95% CI Lower", "95% CI Upper"),
+                       row.names = FALSE))
   } else {
-    .print_kable(desc_table,
-                 caption = paste("Group Descriptives:", dv_name, "by", group_name),
-                 row.names = FALSE)
+    print(knitr::kable(desc_table,
+                       caption = paste("Group Descriptives:", dv_name, "by", group_name),
+                       row.names = FALSE))
   }
   cat("\n")
 
@@ -821,28 +695,26 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
 
     welch_table <- data.frame(
       F_value = round(model$statistic, 3),
-      df1     = round(model$parameter[1], 1),
-      df2     = round(model$parameter[2], 1),
+      df1 = round(model$parameter[1], 1),
+      df2 = round(model$parameter[2], 1),
       p_value = p_fmt,
       stringsAsFactors = FALSE,
       row.names = NULL
     )
 
-    .print_kable(welch_table,
-                 caption = paste("Welch's ANOVA:", dv_name, "by", group_name),
-                 col.names = c("F", "df1", "df2", "p"),
-                 row.names = FALSE)
+    print(knitr::kable(welch_table,
+                       caption = paste("Welch's ANOVA:", dv_name, "by", group_name),
+                       col.names = c("F", "df1", "df2", "p"),
+                       row.names = FALSE))
 
-    cat("\nNote: Sum of Squares and Mean Squares are not available for Welch's ANOVA.\n",
-        "To obtain these, run jaov() without welch = TRUE.\n", sep = "")
+    cat("\nNote: Sum of Squares and Mean Squares are not available for the Welch ANOVA.\nTo obtain these, run jaov() without the welch = TRUE option.\n")
 
     if (posthoc) {
-      cat("\nNote: Tukey HSD post-hoc tests are not available with Welch's ANOVA.\n",
-          "Run without welch = TRUE for post-hoc comparisons.\n", sep = "")
+      cat("\nNote: Tukey HSD post-hoc tests are not available with the Welch ANOVA.\nRun without welch = TRUE for post-hoc comparisons.\n")
     }
 
     if (effect.size) {
-      temp_model  <- stats::aov(formula, data = data)
+      temp_model <- stats::aov(formula, data = data)
       temp_result <- summary(temp_model)[[1]]
       eta_sq <- round(temp_result$`Sum Sq`[1] / sum(temp_result$`Sum Sq`), 3)
       cat("\nEta-squared:", eta_sq, "\n")
@@ -850,7 +722,7 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
     }
 
   } else {
-    model  <- aov(formula, data = data)
+    model <- aov(formula, data = data)
     result <- summary(model)[[1]]
 
     total_df <- sum(result$Df)
@@ -860,20 +732,19 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
     p_fmt <- if (!is.na(p_val) && p_val < 0.001) "<.001" else sprintf("%.3f", p_val)
 
     anova_table <- data.frame(
-      Source         = c(group_name, "Residual", "Total"),
-      df             = c(result$Df, total_df),
+      Source = c(group_name, "Residual", "Total"),
+      df = c(result$Df, total_df),
       Sum_of_Squares = round(c(result$`Sum Sq`, total_ss), 3),
-      Mean_Square    = c(round(result$`Mean Sq`, 3), NA),
-      F_value        = c(round(result$`F value`[1], 3), NA, NA),
-      p_value        = c(p_fmt, NA, NA),
+      Mean_Square = c(round(result$`Mean Sq`, 3), NA),
+      F_value = c(round(result$`F value`[1], 3), NA, NA),
+      p_value = c(p_fmt, NA, NA),
       stringsAsFactors = FALSE
     )
 
-    .print_kable(anova_table,
-                 caption = paste("ANOVA:", dv_name, "by", group_name),
-                 col.names = c("Source", "df", "Sum of Squares",
-                               "Mean Square", "F", "p"),
-                 row.names = FALSE)
+    print(knitr::kable(anova_table,
+                       caption = paste("ANOVA:", dv_name, "by", group_name),
+                       col.names = c("Source", "df", "Sum of Squares", "Mean Square", "F", "p"),
+                       row.names = FALSE))
 
     if (effect.size) {
       eta_sq <- round(result$`Sum Sq`[1] / sum(result$`Sum Sq`), 3)
@@ -881,38 +752,33 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
     }
 
     if (posthoc) {
-      tukey        <- stats::TukeyHSD(model)
+      tukey <- stats::TukeyHSD(model)
       tukey_result <- as.data.frame(tukey[[1]])
 
-      tukey_p     <- tukey_result$`p adj`
+      tukey_p <- tukey_result$`p adj`
       tukey_p_fmt <- ifelse(!is.na(tukey_p) & tukey_p < 0.001, "<.001",
                             sprintf("%.3f", tukey_p))
 
       tukey_table <- data.frame(
         Comparison = rownames(tukey_result),
         Difference = round(tukey_result$diff, 3),
-        CI_Lower   = round(tukey_result$lwr,  3),
-        CI_Upper   = round(tukey_result$upr,  3),
-        p_adj      = tukey_p_fmt,
+        CI_Lower = round(tukey_result$lwr, 3),
+        CI_Upper = round(tukey_result$upr, 3),
+        p_adj = tukey_p_fmt,
         stringsAsFactors = FALSE,
-        row.names  = NULL
+        row.names = NULL
       )
 
       cat("\n")
-      .print_kable(tukey_table,
-                   caption = "Tukey HSD Post-Hoc Comparisons",
-                   col.names = c("Comparison", "Mean Difference",
-                                 "95% CI Lower", "95% CI Upper",
-                                 "p (adjusted)"),
-                   row.names = FALSE)
+      print(knitr::kable(tukey_table,
+                         caption = "Tukey HSD Post-Hoc Comparisons",
+                         col.names = c("Comparison", "Mean Difference", "95% CI Lower", "95% CI Upper", "p (adjusted)"),
+                         row.names = FALSE))
     }
   }
 
   invisible(model)
 }
-
-
-# ── jcorr ─────────────────────────────────────────────────────────────────────
 
 #' Bivariate correlation matrix with p values and pairwise N
 #'
@@ -922,9 +788,6 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
 #' Handles haven-labelled and factor variables with numeric levels.
 #' Warns when variables may be categorical rather than continuous.
 #'
-#' A red title identifying the correlation method is printed first,
-#' followed by variable labels (if present), then the matrix.
-#'
 #' @param data A data frame.
 #' @param ... Unquoted variable names within \code{data}.
 #' @param method Character. Correlation method: "pearson" (default),
@@ -933,7 +796,7 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
 #'   when available.
 #'
 #' @return Invisibly returns a list containing the correlation matrix,
-#'   p-value matrix, and pairwise N matrix.
+#' p-value matrix, and pairwise N matrix.
 #'
 #' @examples
 #' jcorr(mtcars, mpg, hp, wt)
@@ -942,28 +805,24 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
 #' @importFrom stats cor.test complete.cases
 #' @export
 jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
-  variables      <- rlang::enquos(...)
+  variables <- rlang::enquos(...)
   variable_names <- purrr::map_chr(variables, rlang::quo_name)
-
+  # Check for minimum number of variables
   if (length(variable_names) < 2) {
     stop("jcorr() requires at least 2 variables. Only 1 was provided.", call. = FALSE)
   }
 
+
+  # Validate method
   method <- tolower(method)
   if (!method %in% c("pearson", "spearman", "kendall")) {
     stop("method must be 'pearson', 'spearman', or 'kendall'.", call. = FALSE)
   }
 
-  method_label <- switch(method,
-                         pearson  = "Pearson",
-                         spearman = "Spearman",
-                         kendall  = "Kendall")
-
-  # Red title
-  .cat_red(paste0(method_label, " Bivariate Correlations\n"))
-
+  # Extract and prepare data
   cor_data <- data[, variable_names, drop = FALSE]
 
+  # Handle haven-labelled, factor, character, and low-unique numeric variables
   for (v in variable_names) {
     if (haven::is.labelled(cor_data[[v]])) {
       warning(paste0("'", v, "' is a haven-labelled variable and may be categorical. ",
@@ -994,26 +853,34 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
     }
   }
 
-  n_vars   <- length(variable_names)
-  r_matrix <- matrix(NA, n_vars, n_vars, dimnames = list(variable_names, variable_names))
-  p_matrix <- matrix(NA, n_vars, n_vars, dimnames = list(variable_names, variable_names))
-  n_matrix <- matrix(NA, n_vars, n_vars, dimnames = list(variable_names, variable_names))
+  n_vars <- length(variable_names)
 
+  # Initialize matrices
+  r_matrix <- matrix(NA, n_vars, n_vars,
+                     dimnames = list(variable_names, variable_names))
+  p_matrix <- matrix(NA, n_vars, n_vars,
+                     dimnames = list(variable_names, variable_names))
+  n_matrix <- matrix(NA, n_vars, n_vars,
+                     dimnames = list(variable_names, variable_names))
+
+  # Compute pairwise correlations
   for (i in seq_len(n_vars)) {
     for (j in seq_len(n_vars)) {
-      complete       <- stats::complete.cases(cor_data[[i]], cor_data[[j]])
+      complete <- stats::complete.cases(cor_data[[i]], cor_data[[j]])
       n_matrix[i, j] <- sum(complete)
       if (i == j) {
         r_matrix[i, j] <- 1
       } else if (n_matrix[i, j] > 2) {
-        test            <- stats::cor.test(cor_data[[i]], cor_data[[j]], method = method)
+        test <- stats::cor.test(cor_data[[i]], cor_data[[j]], method = method)
         r_matrix[i, j] <- test$estimate
         p_matrix[i, j] <- test$p.value
       }
     }
   }
 
-  display <- matrix("", n_vars, n_vars, dimnames = list(variable_names, variable_names))
+  # Build display table (lower triangle only)
+  display <- matrix("", n_vars, n_vars,
+                    dimnames = list(variable_names, variable_names))
 
   for (i in seq_len(n_vars)) {
     for (j in seq_len(n_vars)) {
@@ -1033,18 +900,30 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
 
   display_df <- as.data.frame(display, stringsAsFactors = FALSE)
 
+  # Method label for caption
+  method_label <- switch(method,
+                         pearson = "Pearson",
+                         spearman = "Spearman",
+                         kendall = "Kendall"
+  )
+
   if (labels) {
     .print_var_labels(data, variable_names)
   }
 
-  .print_kable(display_df,
-               caption = paste0("Bivariate Correlations (", method_label, ")"))
+  print(knitr::kable(display_df,
+                     caption = paste0("Bivariate Correlations (", method_label, ")")))
 
-  invisible(list(r = r_matrix, p = p_matrix, n = n_matrix, method = method))
+  invisible(list(
+    r = r_matrix,
+    p = p_matrix,
+    n = n_matrix,
+    method = method
+  ))
 }
 
 
-# ── jlm ───────────────────────────────────────────────────────────────────────
+
 
 #' SPSS-like linear regression output with standardised coefficients
 #'
@@ -1053,12 +932,9 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
 #' and standardised coefficients ("Std B"). Standardised coefficients are left
 #' blank for the intercept and for dummy-coded factor terms.
 #'
-#' Also prints key model summary information (R-squared, residual standard
-#' error, F-test, sums of squares, and N). If any coefficients are dropped
-#' due to perfect collinearity, a warning message is printed.
-#'
-#' A red "Linear Regression" title is printed first, followed by variable
-#' labels (if present), then the coefficient table and model fit statistics.
+#' The function also prints key model summary information (R-squared, residual
+#' standard error, F-test, sums of squares, and N). If any coefficients are
+#' dropped due to perfect collinearity, a warning message is printed.
 #'
 #' Handles haven-labelled variables by converting them appropriately before
 #' fitting the model.
@@ -1069,17 +945,13 @@ jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
 #'   when available.
 #'
 #' @return Invisibly returns a list containing the fitted model, a coefficient
-#'   table (data frame), and model fit statistics.
+#' table (data frame), and model fit statistics.
 #'
 #' @examples
 #' jlm(mpg ~ hp + wt, data = mtcars)
 #'
 #' @export
 jlm <- function(formula, data, labels = TRUE) {
-
-  # Red title
-  .cat_red("Linear Regression\n")
-
   model_vars <- all.vars(formula)
 
   for (v in model_vars) {
@@ -1096,30 +968,33 @@ jlm <- function(formula, data, labels = TRUE) {
     .print_var_labels(data, model_vars)
   }
 
-  mf            <- stats::model.frame(formula, data = data, na.action = stats::na.omit)
-  model         <- stats::lm(formula, data = mf)
+  mf <- stats::model.frame(formula, data = data, na.action = stats::na.omit)
+
+  model <- stats::lm(formula, data = mf)
   model_summary <- summary(model)
 
   coefs <- as.data.frame(model_summary$coefficients, stringsAsFactors = FALSE)
   colnames(coefs)[1:4] <- c("b", "StdErr", "t", "P")
 
-  mf_std   <- mf
+  mf_std <- mf
   num_cols <- vapply(mf_std, is.numeric, logical(1))
   mf_std[, num_cols] <- lapply(mf_std[, num_cols, drop = FALSE], scale)
 
-  std_model        <- stats::lm(formula, data = mf_std)
-  std_coefs        <- stats::coef(std_model)
-  std_b            <- rep(NA_real_, nrow(coefs))
-  names(std_b)     <- rownames(coefs)
-  common           <- intersect(names(std_coefs), names(std_b))
-  std_b[common]    <- std_coefs[common]
+  std_model <- stats::lm(formula, data = mf_std)
+  std_coefs <- stats::coef(std_model)
+
+  std_b <- rep(NA_real_, nrow(coefs))
+  names(std_b) <- rownames(coefs)
+
+  common <- intersect(names(std_coefs), names(std_b))
+  std_b[common] <- std_coefs[common]
 
   if ("(Intercept)" %in% names(std_b)) std_b["(Intercept)"] <- NA_real_
 
   factor_terms <- names(mf)[vapply(mf, is.factor, logical(1))]
   if (length(factor_terms) > 0) {
     for (term in factor_terms) {
-      dummy_rows        <- grep(paste0("^", term), rownames(coefs), value = TRUE)
+      dummy_rows <- grep(paste0("^", term), rownames(coefs), value = TRUE)
       std_b[dummy_rows] <- NA_real_
     }
   }
@@ -1131,30 +1006,31 @@ jlm <- function(formula, data, labels = TRUE) {
   fmt3 <- function(x) sprintf("%.3f", as.numeric(x))
 
   out_coefs <- data.frame(
-    b       = fmt3(coefs$b),
-    StdErr  = fmt3(coefs$StdErr),
-    t       = fmt3(coefs$t),
+    b      = fmt3(coefs$b),
+    StdErr = fmt3(coefs$StdErr),
+    t      = fmt3(coefs$t),
     `Std B` = ifelse(is.na(std_b), "", sprintf("%.3f", as.numeric(std_b))),
-    P       = p_fmt,
+    P      = p_fmt,
     stringsAsFactors = FALSE,
     row.names = rownames(coefs)
   )
 
-  r_squared   <- round(model_summary$r.squared, 3)
+  r_squared <- round(model_summary$r.squared, 3)
   residual_se <- round(model_summary$sigma, 3)
 
-  f_stat  <- model_summary$fstatistic
+  f_stat <- model_summary$fstatistic
   f_value <- round(unname(f_stat[1]), 3)
-  df1     <- unname(f_stat[2])
-  df2     <- unname(f_stat[3])
-  f_p     <- stats::pf(f_value, df1, df2, lower.tail = FALSE)
+  df1 <- unname(f_stat[2])
+  df2 <- unname(f_stat[3])
+  f_p <- stats::pf(f_value, df1, df2, lower.tail = FALSE)
   f_p_fmt <- ifelse(is.na(f_p) | f_p < 0.001, "<.001", sprintf("%.3f", f_p))
 
-  n_obs         <- stats::nobs(model)
-  y             <- stats::model.response(mf)
-  ss_total      <- round(sum((y - mean(y))^2), 3)
+  n_obs <- stats::nobs(model)
+
+  y <- stats::model.response(mf)
+  ss_total <- round(sum((y - mean(y))^2), 3)
   ss_regression <- round(sum((stats::fitted(model) - mean(y))^2), 3)
-  ss_residual   <- round(sum(stats::residuals(model)^2), 3)
+  ss_residual <- round(sum(stats::residuals(model)^2), 3)
 
   if (any(is.na(stats::coef(model)))) {
     cat("\nWARNING: One or more variables have been removed from the model due to collinearity.\n")
@@ -1168,27 +1044,25 @@ jlm <- function(formula, data, labels = TRUE) {
   cat("\nF-statistic: ", sprintf("%.3f", f_value),
       " on ", df1, " and ", df2,
       " DF, p-value: ", f_p_fmt, "\n", sep = "")
+
   cat("Sum of Squares:\n")
-  cat("  Regression: ", sprintf("%.3f", ss_regression), "\n", sep = "")
-  cat("  Residual:   ", sprintf("%.3f", ss_residual),   "\n", sep = "")
-  cat("  Total:      ", sprintf("%.3f", ss_total),      "\n", sep = "")
+  cat(" Regression: ", sprintf("%.3f", ss_regression), "\n", sep = "")
+  cat(" Residual: ", sprintf("%.3f", ss_residual), "\n", sep = "")
+  cat(" Total: ", sprintf("%.3f", ss_total), "\n", sep = "")
+
   cat("\nNumber of observations: ", n_obs, "\n", sep = "")
 
   invisible(list(
-    model           = model,
-    coefficients    = out_coefs,
-    r_squared       = r_squared,
-    residual_se     = residual_se,
-    f_statistic     = c(value = f_value, df1 = df1, df2 = df2, p = f_p),
-    sums_of_squares = c(regression = ss_regression,
-                        residual   = ss_residual,
-                        total      = ss_total),
+    model = model,
+    coefficients = out_coefs,
+    r_squared = r_squared,
+    residual_se = residual_se,
+    f_statistic = c(value = f_value, df1 = df1, df2 = df2, p = f_p),
+    sums_of_squares = c(regression = ss_regression, residual = ss_residual, total = ss_total),
     n = n_obs
   ))
 }
 
-
-# ── jchisq ────────────────────────────────────────────────────────────────────
 
 #' Chi-square test of independence with cross-tabulation
 #'
@@ -1198,9 +1072,6 @@ jlm <- function(formula, data, labels = TRUE) {
 #' haven-labelled, numeric, factor, and character variables.
 #' For haven-labelled variables, numeric codes are displayed alongside
 #' labels.
-#'
-#' A red "Chi-Square Analysis" title is printed first, followed by
-#' variable labels (if present), then the cross-tabulation and test results.
 #'
 #' @param formula A formula of the form \code{Row ~ Column}.
 #' @param data A data frame containing variables referenced in \code{formula}.
@@ -1223,122 +1094,146 @@ jlm <- function(formula, data, labels = TRUE) {
 jchisq <- function(formula, data, expected = FALSE, row.pct = TRUE,
                    col.pct = FALSE, labels = TRUE) {
 
-  terms    <- all.vars(formula)
+  # Extract variable names from the formula
+  terms <- all.vars(formula)
   row_name <- terms[1]
   col_name <- terms[2]
 
-  # Red title
-  .cat_red("Chi-Square Analysis\n")
-
+  # Get variables
   row_var <- data[[row_name]]
   col_var <- data[[col_name]]
 
+  # Capture haven codes before conversion
   row_labelled <- haven::is.labelled(row_var)
   col_labelled <- haven::is.labelled(col_var)
 
   if (row_labelled) {
     row_codes <- sort(unique(as.numeric(row_var[!is.na(row_var)])))
-    row_var   <- haven::as_factor(row_var)
+    row_var <- haven::as_factor(row_var)
   } else if (!is.factor(row_var)) {
     row_var <- factor(row_var)
   }
 
   if (col_labelled) {
     col_codes <- sort(unique(as.numeric(col_var[!is.na(col_var)])))
-    col_var   <- haven::as_factor(col_var)
+    col_var <- haven::as_factor(col_var)
   } else if (!is.factor(col_var)) {
     col_var <- factor(col_var)
   }
 
+  # Variable labels
   if (labels) {
     .print_var_labels(data, c(row_name, col_name))
   }
 
+  # Build group labels with codes if haven-labelled
   row_levels <- levels(row_var)
   col_levels <- levels(col_var)
-  row_labels <- if (row_labelled) paste0(row_codes, ": ", row_levels) else row_levels
-  col_labels <- if (col_labelled) paste0(col_codes, ": ", col_levels) else col_levels
 
-  obs_table  <- table(row_var, col_var)
+  if (row_labelled) {
+    row_labels <- paste0(row_codes, ": ", row_levels)
+  } else {
+    row_labels <- row_levels
+  }
+
+  if (col_labelled) {
+    col_labels <- paste0(col_codes, ": ", col_levels)
+  } else {
+    col_labels <- col_levels
+  }
+
+  # Cross-tabulation (observed)
+  obs_table <- table(row_var, col_var)
+
+  # Chi-square test
   chi_result <- suppressWarnings(stats::chisq.test(obs_table))
-  exp_table  <- chi_result$expected
+  exp_table <- chi_result$expected
 
+  # Format p value
   p_val <- chi_result$p.value
   p_fmt <- if (!is.na(p_val) && p_val < 0.001) "<.001" else sprintf("%.3f", p_val)
 
+  # ── Build display table ───────────────────────────────────────────
   n_rows <- length(row_levels)
   n_cols <- length(col_levels)
+
+  # Header
   header <- c(row_name, col_labels, "Total")
 
   display_rows <- list()
 
   for (i in seq_len(n_rows)) {
-    obs_vals  <- as.numeric(obs_table[i, ])
+    # Observed counts
+    obs_vals <- as.numeric(obs_table[i, ])
     row_total <- sum(obs_vals)
-    display_rows <- c(display_rows,
-                      list(c(row_labels[i], as.character(obs_vals),
-                             as.character(row_total))))
+    obs_row <- c(row_labels[i], as.character(obs_vals), as.character(row_total))
+    display_rows <- c(display_rows, list(obs_row))
 
+    # Expected frequencies
     if (expected) {
-      exp_vals     <- round(exp_table[i, ], 1)
-      display_rows <- c(display_rows,
-                        list(c("  (Expected)", sprintf("%.1f", exp_vals),
-                               sprintf("%.1f", sum(exp_vals)))))
+      exp_vals <- round(exp_table[i, ], 1)
+      exp_row <- c("  (Expected)", sprintf("%.1f", exp_vals), sprintf("%.1f", sum(exp_vals)))
+      display_rows <- c(display_rows, list(exp_row))
     }
 
+    # Row percentages
     if (row.pct) {
-      row_pcts     <- round(obs_vals / row_total * 100, 1)
-      display_rows <- c(display_rows,
-                        list(c("  (Row %)", sprintf("%.1f%%", row_pcts), "100.0%")))
+      row_pcts <- round(obs_vals / row_total * 100, 1)
+      pct_row <- c("  (Row %)", sprintf("%.1f%%", row_pcts), "100.0%")
+      display_rows <- c(display_rows, list(pct_row))
     }
 
+    # Column percentages
     if (col.pct) {
-      col_totals    <- colSums(obs_table)
-      col_pcts      <- round(obs_vals / col_totals * 100, 1)
-      grand_total   <- sum(obs_table)
+      col_totals <- colSums(obs_table)
+      col_pcts <- round(obs_vals / col_totals * 100, 1)
+      grand_total <- sum(obs_table)
       col_pct_total <- round(row_total / grand_total * 100, 1)
-      display_rows  <- c(display_rows,
-                         list(c("  (Col %)", sprintf("%.1f%%", col_pcts),
-                                sprintf("%.1f%%", col_pct_total))))
+      cpct_row <- c("  (Col %)", sprintf("%.1f%%", col_pcts), sprintf("%.1f%%", col_pct_total))
+      display_rows <- c(display_rows, list(cpct_row))
     }
   }
 
-  col_totals  <- colSums(obs_table)
+  # Column totals row
+  col_totals <- colSums(obs_table)
   grand_total <- sum(obs_table)
-  display_rows <- c(display_rows,
-                    list(c("Total", as.character(col_totals),
-                           as.character(grand_total))))
+  total_row <- c("Total", as.character(col_totals), as.character(grand_total))
+  display_rows <- c(display_rows, list(total_row))
 
+  # Column percentage totals
   if (col.pct) {
-    display_rows <- c(display_rows,
-                      list(c("  (Col %)", rep("100.0%", n_cols), "100.0%")))
+    cpct_total_row <- c("  (Col %)", rep("100.0%", n_cols), "100.0%")
+    display_rows <- c(display_rows, list(cpct_total_row))
   }
 
-  display_df           <- as.data.frame(do.call(rbind, display_rows),
-                                        stringsAsFactors = FALSE)
+  # Convert to data frame
+  display_df <- as.data.frame(do.call(rbind, display_rows), stringsAsFactors = FALSE)
   colnames(display_df) <- header
 
-  .print_kable(display_df,
-               caption = paste("Cross-tabulation:", row_name, "by", col_name),
-               row.names = FALSE)
+  cat("\n")
+  print(knitr::kable(display_df,
+                     caption = paste("Cross-tabulation:", row_name, "by", col_name),
+                     row.names = FALSE))
   cat("\n")
 
+  # Chi-square results table
   chi_table <- data.frame(
     Chi_Square = round(chi_result$statistic, 3),
-    df         = chi_result$parameter,
-    p          = p_fmt,
-    N          = grand_total,
+    df = chi_result$parameter,
+    p = p_fmt,
+    N = grand_total,
     stringsAsFactors = FALSE,
-    row.names  = NULL
+    row.names = NULL
   )
 
-  .print_kable(chi_table,
-               caption = "Chi-Square Test of Independence",
-               col.names = c("Chi-Square", "df", "p", "N"),
-               row.names = FALSE)
+  print(knitr::kable(chi_table,
+                     caption = "Chi-Square Test of Independence",
+                     col.names = c("Chi-Square", "df", "p", "N"),
+                     row.names = FALSE))
 
+  # Warning about expected frequencies
   min_expected <- min(exp_table)
-  n_below_5    <- sum(exp_table < 5)
+  n_below_5 <- sum(exp_table < 5)
   if (n_below_5 > 0) {
     cat(paste0("\nNote: ", n_below_5, " cell(s) have expected frequencies less than 5 ",
                "(minimum expected = ", round(min_expected, 1), "). ",
@@ -1346,17 +1241,15 @@ jchisq <- function(formula, data, expected = FALSE, row.pct = TRUE,
   }
 
   invisible(list(
-    observed   = obs_table,
-    expected   = exp_table,
+    observed = obs_table,
+    expected = exp_table,
     chi_square = chi_result$statistic,
-    df         = chi_result$parameter,
-    p          = chi_result$p.value,
-    n          = grand_total
+    df = chi_result$parameter,
+    p = chi_result$p.value,
+    n = grand_total
   ))
 }
 
-
-# ── jscreen ───────────────────────────────────────────────────────────────────
 
 #' Data screening overview
 #'
@@ -1364,9 +1257,6 @@ jchisq <- function(formula, data, expected = FALSE, row.pct = TRUE,
 #' cases, variable types, missing data counts and percentages, and
 #' potential outliers for numeric variables. Handles haven-labelled
 #' variables by reporting their labelled status.
-#'
-#' A red "Data Screening" title is printed first, followed by a dataset
-#' summary, variable labels (if present), and the screening table.
 #'
 #' @param data A data frame.
 #' @param outlier.sd Numeric. Number of standard deviations from the mean
@@ -1383,55 +1273,55 @@ jchisq <- function(formula, data, expected = FALSE, row.pct = TRUE,
 #' @export
 jscreen <- function(data, outlier.sd = 3, labels = TRUE) {
 
-  n_cases   <- nrow(data)
-  n_vars    <- ncol(data)
+  n_cases <- nrow(data)
+  n_vars <- ncol(data)
   var_names <- names(data)
 
-  # Red title
-  .cat_red("Data Screening\n")
+  cat("\n")
+  cat("Dataset Overview\n")
   cat("  Cases:", n_cases, "\n")
   cat("  Variables:", n_vars, "\n")
   cat("  Complete cases (no missing on any variable):",
-      sum(stats::complete.cases(data)), "\n")
+      sum(stats::complete.cases(data)), "\n\n")
 
   screen_rows <- lapply(var_names, function(v) {
     col <- data[[v]]
 
-    var_type <- if (haven::is.labelled(col)) {
-      "haven_labelled"
+    if (haven::is.labelled(col)) {
+      var_type <- "haven_labelled"
     } else if (is.factor(col)) {
-      "factor"
+      var_type <- "factor"
     } else if (is.numeric(col)) {
-      "numeric"
+      var_type <- "numeric"
     } else if (is.character(col)) {
-      "character"
+      var_type <- "character"
     } else {
-      paste(class(col), collapse = ", ")
+      var_type <- paste(class(col), collapse = ", ")
     }
 
-    n_missing   <- sum(is.na(col))
+    n_missing <- sum(is.na(col))
     pct_missing <- round(n_missing / n_cases * 100, 1)
-    n_unique    <- length(unique(col[!is.na(col)]))
+    n_unique <- length(unique(col[!is.na(col)]))
 
     n_outliers <- NA
     if (is.numeric(col) || haven::is.labelled(col)) {
       num_col <- as.numeric(col)
       m <- mean(num_col, na.rm = TRUE)
       s <- stats::sd(num_col, na.rm = TRUE)
-      n_outliers <- if (!is.na(s) && s > 0) {
-        sum(abs(num_col - m) > outlier.sd * s, na.rm = TRUE)
+      if (!is.na(s) && s > 0) {
+        n_outliers <- sum(abs(num_col - m) > outlier.sd * s, na.rm = TRUE)
       } else {
-        0
+        n_outliers <- 0
       }
     }
 
     data.frame(
-      Variable    = v,
-      Type        = var_type,
-      Unique      = n_unique,
-      Missing     = n_missing,
+      Variable = v,
+      Type = var_type,
+      Unique = n_unique,
+      Missing = n_missing,
       Pct_Missing = pct_missing,
-      Outliers    = n_outliers,
+      Outliers = n_outliers,
       stringsAsFactors = FALSE
     )
   })
@@ -1439,22 +1329,16 @@ jscreen <- function(data, outlier.sd = 3, labels = TRUE) {
   screen_table <- do.call(rbind, screen_rows)
 
   if (labels) {
-    cat("\n")
     .print_var_labels(data, var_names)
-  } else {
-    cat("\n")
   }
 
-  .print_kable(screen_table,
-               caption = paste0("Data Screening (outliers defined as > ",
-                                outlier.sd, " SD from mean)"),
-               col.names = c("Variable", "Type", "Unique Values",
-                             "Missing", "% Missing", "Outliers"),
-               row.names = FALSE)
+  print(knitr::kable(screen_table,
+                     caption = paste0("Data Screening (outliers defined as > ", outlier.sd, " SD from mean)"),
+                     col.names = c("Variable", "Type", "Unique Values", "Missing", "% Missing", "Outliers"),
+                     row.names = FALSE))
 
   missing_vars <- screen_table[screen_table$Missing > 0, ]
-  outlier_vars <- screen_table[!is.na(screen_table$Outliers) &
-                                 screen_table$Outliers > 0, ]
+  outlier_vars <- screen_table[!is.na(screen_table$Outliers) & screen_table$Outliers > 0, ]
 
   if (nrow(missing_vars) > 0) {
     cat("\nVariables with missing data:\n")
@@ -1482,8 +1366,6 @@ jscreen <- function(data, outlier.sd = 3, labels = TRUE) {
 }
 
 
-# ── jalpha ────────────────────────────────────────────────────────────────────
-
 #' Cronbach's Alpha Reliability Analysis
 #'
 #' Computes Cronbach's alpha and prints SPSS-style reliability output
@@ -1492,10 +1374,6 @@ jscreen <- function(data, outlier.sd = 3, labels = TRUE) {
 #' scratch with no external package dependencies beyond base R.
 #' Handles haven-labelled variables automatically. Detects potentially
 #' reverse-coded or misfit items.
-#'
-#' A red "Reliability Analysis" title is printed first, followed by the
-#' case processing summary, overall alpha, item statistics, and
-#' item-total statistics.
 #'
 #' @param data A data frame.
 #' @param ... Unquoted variable names (scale items) within \code{data}.
@@ -1510,30 +1388,30 @@ jscreen <- function(data, outlier.sd = 3, labels = TRUE) {
 #'
 #' @export
 jalpha <- function(data, ..., labels = TRUE) {
-  variables      <- rlang::enquos(...)
+  variables <- rlang::enquos(...)
   variable_names <- purrr::map_chr(variables, rlang::quo_name)
 
-  # Red title
-  .cat_red("Reliability Analysis\n")
-
+  # Extract items
   items <- data[, variable_names, drop = FALSE]
 
+  # Handle haven-labelled variables
   for (v in variable_names) {
     if (haven::is.labelled(items[[v]])) {
       items[[v]] <- as.numeric(items[[v]])
     }
   }
 
-  complete_mask  <- stats::complete.cases(items)
-  n_total        <- nrow(items)
-  n_used         <- sum(complete_mask)
-  n_excluded     <- n_total - n_used
+  # Listwise deletion
+  complete_mask <- stats::complete.cases(items)
+  n_total <- nrow(items)
+  n_used <- sum(complete_mask)
+  n_excluded <- n_total - n_used
   items_complete <- items[complete_mask, ]
 
-  # Case Processing Summary
+  # ── Case Processing Summary ───────────────────────────────────────
   case_table <- data.frame(
-    Cases   = c("Valid", "Excluded", "Total"),
-    N       = c(n_used, n_excluded, n_total),
+    Cases = c("Valid", "Excluded", "Total"),
+    N = c(n_used, n_excluded, n_total),
     Percent = sprintf("%.1f", c(n_used / n_total * 100,
                                 n_excluded / n_total * 100,
                                 100)),
@@ -1541,80 +1419,81 @@ jalpha <- function(data, ..., labels = TRUE) {
   )
 
   cat("\n")
-  .print_kable(case_table,
-               caption = "Case Processing Summary",
-               col.names = c("", "N", "%"),
-               row.names = FALSE)
+  print(knitr::kable(case_table,
+                     caption = "Case Processing Summary",
+                     col.names = c("", "N", "%"),
+                     row.names = FALSE))
   cat("\n")
 
-  # Overall Cronbach's Alpha
-  k             <- ncol(items_complete)
-  item_vars     <- sapply(items_complete, stats::var)
-  total_var     <- stats::var(rowSums(items_complete))
+  # ── Calculate Overall Cronbach's Alpha ────────────────────────────
+  k <- ncol(items_complete)
+  item_vars <- sapply(items_complete, stats::var)
+  total_var <- stats::var(rowSums(items_complete))
   alpha_overall <- round((k / (k - 1)) * (1 - sum(item_vars) / total_var), 3)
 
   alpha_table <- data.frame(
-    Alpha   = alpha_overall,
+    Alpha = alpha_overall,
     N_Items = k,
     stringsAsFactors = FALSE
   )
 
-  .print_kable(alpha_table,
-               caption = "Reliability Statistics",
-               col.names = c("Cronbach's Alpha", "N of Items"),
-               row.names = FALSE)
+  print(knitr::kable(alpha_table,
+                     caption = "Reliability Statistics",
+                     col.names = c("Cronbach's Alpha", "N of Items"),
+                     row.names = FALSE))
   cat("\n")
 
-  # Variable Labels
+  # ── Variable Labels ───────────────────────────────────────────────
   if (labels) {
     .print_var_labels(data, variable_names)
   }
 
-  # Item Statistics
+  # ── Item Statistics ───────────────────────────────────────────────
   item_stats <- data.frame(
     Item = variable_names,
     Mean = round(colMeans(items_complete), 3),
-    SD   = round(sapply(items_complete, stats::sd), 3),
-    N    = n_used,
+    SD = round(sapply(items_complete, stats::sd), 3),
+    N = n_used,
     stringsAsFactors = FALSE,
     row.names = NULL
   )
 
-  .print_kable(item_stats,
-               caption = "Item Statistics",
-               row.names = FALSE)
+  print(knitr::kable(item_stats,
+                     caption = "Item Statistics",
+                     row.names = FALSE))
   cat("\n")
 
-  # Item-Total Statistics
-  total_scores    <- rowSums(items_complete)
+  # ── Item-Total Statistics ─────────────────────────────────────────
+  total_scores <- rowSums(items_complete)
 
   item_total_rows <- lapply(seq_along(variable_names), function(i) {
-    item_name   <- variable_names[i]
-    item_col    <- items_complete[[i]]
-    rest_total  <- total_scores - item_col
+    item_name <- variable_names[i]
+    item_col <- items_complete[[i]]
+
+    rest_total <- total_scores - item_col
     r_corrected <- round(stats::cor(item_col, rest_total), 3)
 
     remaining <- items_complete[, -i, drop = FALSE]
     k_r <- ncol(remaining)
-    alpha_deleted <- if (k_r < 2) {
-      NA
+    if (k_r < 2) {
+      alpha_deleted <- NA
     } else {
       item_vars_r <- sapply(remaining, stats::var)
       total_var_r <- stats::var(rowSums(remaining))
-      round((k_r / (k_r - 1)) * (1 - sum(item_vars_r) / total_var_r), 3)
+      alpha_deleted <- round((k_r / (k_r - 1)) * (1 - sum(item_vars_r) / total_var_r), 3)
     }
 
     data.frame(
-      Item                   = item_name,
+      Item = item_name,
       Corrected_Item_Total_r = r_corrected,
-      Alpha_If_Deleted       = alpha_deleted,
-      stringsAsFactors       = FALSE
+      Alpha_If_Deleted = alpha_deleted,
+      stringsAsFactors = FALSE
     )
   })
 
   item_total_table <- do.call(rbind, item_total_rows)
 
-  # Diagnostic Warning
+  # ── Diagnostic Warning ────────────────────────────────────────────
   neg_items <- item_total_table$Item[item_total_table$Corrected_Item_Total_r < 0]
   pos_items <- item_total_table$Item[item_total_table$Corrected_Item_Total_r >= 0]
 
@@ -1625,7 +1504,8 @@ jalpha <- function(data, ..., labels = TRUE) {
     if (n_neg <= n_pos) {
       warning(paste0(
         "The following item(s) are negatively correlated with the rest ",
-        "of the scale: ", paste(neg_items, collapse = ", "),
+        "of the scale: ",
+        paste(neg_items, collapse = ", "),
         ". This may indicate that these items need to be reverse-coded, ",
         "or that they do not belong in the scale. Examine the item-total ",
         "statistics table and the item content to determine the appropriate action."),
@@ -1642,18 +1522,18 @@ jalpha <- function(data, ..., labels = TRUE) {
     cat("\n")
   }
 
-  .print_kable(item_total_table,
-               caption = "Item-Total Statistics",
-               col.names = c("Item", "Corrected Item-Total r",
-                             "Alpha if Item Deleted"),
-               row.names = FALSE)
+  # ── Print Item-Total Table ────────────────────────────────────────
+  print(knitr::kable(item_total_table,
+                     caption = "Item-Total Statistics",
+                     col.names = c("Item", "Corrected Item-Total r", "Alpha if Item Deleted"),
+                     row.names = FALSE))
 
   invisible(list(
-    alpha                 = alpha_overall,
-    n_items               = k,
-    n_used                = n_used,
-    n_excluded            = n_excluded,
-    item_statistics       = item_stats,
+    alpha = alpha_overall,
+    n_items = k,
+    n_used = n_used,
+    n_excluded = n_excluded,
+    item_statistics = item_stats,
     item_total_statistics = item_total_table
   ))
 }

@@ -28,6 +28,10 @@ Supports Pearson (default), Spearman, and Kendall methods.
 Handles haven-labelled and factor variables with numeric levels.
 Warns when variables may be categorical rather than continuous.
 }
+\details{
+A red title identifying the correlation method is printed first,
+followed by variable labels (if present), then the matrix.
+}
 \examples{
 jcorr(mtcars, mpg, hp, wt)
 jcorr(mtcars, mpg, hp, wt, method = "spearman")

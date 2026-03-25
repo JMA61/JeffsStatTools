@@ -13,13 +13,13 @@ devtools::check()     # this is an optional more thorough check. there will be s
 
 # To Commit the new version:
 git add -A
-git commit -m "v0.4.1: Fixed bug where jdesc() using the by= option didn't work with haven labelled variables"
+git commit -m "v0.4.2: Improved jdesc() and jfreq(0) output"
 
 # To Push/Upload to GitHub
 git push
 
 # To create the version tag
-git tag -a v0.4.1 -m "Version 0.4.1"
+git tag -a v0.4.2 -m "Version 0.4.2"
 git push --tags
 
 # Verity that the tag exists:
@@ -49,14 +49,26 @@ jdesc(SampleData, RlshpStatus)
 jdesc(SampleData, Environment1)
 jdesc(SampleData, Environment1, labels = FALSE)
 
+jfreq(SampleData, Environment1)
+
+?jscreen
+jscreen(SampleData)
+
 
 x <- c(10, 20, 30, 40, 50)
 jdesc(x)
 
 jfreq(x)
+?jt
 
+jt(JuvenileDelinquency ~ Gender, data=SampleData)
+
+class(SampleData$JuvenileDelinquency)
 
 GenderF <- SampleData$Gender
+
+?jcorr
+jcorr(SampleData, JuvenileDelinquency, RlshpStatus)
 
 
 

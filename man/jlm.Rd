@@ -25,9 +25,12 @@ and standardised coefficients ("Std B"). Standardised coefficients are left
 blank for the intercept and for dummy-coded factor terms.
 }
 \details{
-The function also prints key model summary information (R-squared, residual
-standard error, F-test, sums of squares, and N). If any coefficients are
-dropped due to perfect collinearity, a warning message is printed.
+Also prints key model summary information (R-squared, residual standard
+error, F-test, sums of squares, and N). If any coefficients are dropped
+due to perfect collinearity, a warning message is printed.
+
+A red "Linear Regression" title is printed first, followed by variable
+labels (if present), then the coefficient table and model fit statistics.
 
 Handles haven-labelled variables by converting them appropriately before
 fitting the model.

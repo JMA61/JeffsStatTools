@@ -2,27 +2,39 @@
 % Please edit documentation in R/7036Tools.R
 \name{jfreq}
 \alias{jfreq}
-\title{SPSS-like frequencies for categorical variables}
+\title{SPSS-like frequency tables for categorical variables}
 \usage{
 jfreq(data, ..., labels = TRUE)
 }
 \arguments{
 \item{data}{A data frame, or a vector.}
 
-\item{...}{Unquoted variable name(s) within \code{data} (ignored if data is a vector).}
+\item{...}{Unquoted variable name(s) within \code{data} (ignored if
+\code{data} is a vector).}
 
-\item{labels}{Logical. If TRUE (default), prints variable labels
-when available.}
+\item{labels}{Logical. If \code{TRUE} (default), prints the variable type
+and label (or "None") beneath the title.}
 }
 \value{
 Invisibly returns a named list of data frames (one per variable)
 containing the frequency table.
 }
 \description{
-Prints SPSS-style frequency tables (Freq, Total \%, Valid \%, Cum. \%) for one or
-more variables in a data frame. Designed for use with unquoted
-variable names. If a variable is a haven labelled vector, value labels and
-the variable label (if present) are shown. Also accepts a simple vector.
+Prints an SPSS-style frequency table (Freq, Total \\%, Valid \\%, Cum. \\%) for
+each variable supplied. Designed for use with unquoted variable names, and
+also accepts a plain vector.
+}
+\details{
+Output is structured consistently with \code{jdesc()}: a red title
+("Frequencies for \emph{varname}") is printed first, followed by the
+variable type and variable label (or "None" if absent), then a single blank
+line before the table. One complete block is printed per variable.
+
+For haven-labelled variables, value labels and numeric codes are combined
+in the frequency table rows (e.g. \code{1: Strongly Oppose}). The type
+line reports \code{haven_labelled (Categorical)} and suppresses the
+uninformative \code{vctrs_vctr} class. Variable labels are shown for all
+variable types, not only haven-labelled ones.
 }
 \examples{
 jfreq(mtcars, cyl, gear)

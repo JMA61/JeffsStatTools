@@ -40,6 +40,10 @@ haven-labelled, numeric, factor, and character variables.
 For haven-labelled variables, numeric codes are displayed alongside
 labels.
 }
+\details{
+A red "Chi-Square Analysis" title is printed first, followed by
+variable labels (if present), then the cross-tabulation and test results.
+}
 \examples{
 jchisq(cyl ~ am, data = mtcars)
 jchisq(cyl ~ am, data = mtcars, expected = TRUE, col.pct = TRUE)

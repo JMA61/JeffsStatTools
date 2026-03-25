@@ -2,9 +2,7 @@
 % Please edit documentation in R/7036Tools.R
 \name{jdesc}
 \alias{jdesc}
-\title{Computes basic descriptive statistics (N, non-missing, min, max, mean, SD)
-for one or more variables in a data frame. Prints a formatted table and
-invisibly returns the underlying results as a data frame.}
+\title{Descriptive statistics for one or more variables}
 \usage{
 jdesc(data, ..., by = NULL, labels = TRUE)
 }
@@ -14,19 +12,35 @@ jdesc(data, ..., by = NULL, labels = TRUE)
 \item{...}{Unquoted variable names within \code{data} (ignored if data is a vector).}
 
 \item{by}{An optional unquoted grouping variable name. When provided,
-descriptives are computed separately for each group.}
+descriptives are computed separately for each group, with a separate
+titled table per dependent variable.}
 
-\item{labels}{Logical. If TRUE (default), prints variable labels
-when available.}
+\item{labels}{Logical. If \code{TRUE} (default), prints the variable type
+and label (or "None") for each variable before the table.}
 }
 \value{
-Invisibly returns a data frame of descriptive statistics. Also prints a table.
+Invisibly returns a data frame of descriptive statistics. Also
+prints a formatted table to the console.
 }
 \description{
+Computes basic descriptive statistics (N, non-missing, min, max, mean, SD)
+for one or more variables in a data frame. Prints a formatted table and
+invisibly returns the underlying results as a data frame.
+}
+\details{
+Output is structured consistently with \code{jfreq()}: a red title is
+printed first, followed by a block showing the type and variable label
+(or "None" if no label is present) for each variable, then a single blank
+line before the table. For multiple variables, one type/label entry is
+printed per variable before the shared table.
+
 Handles haven-labelled, factor, and plain numeric variables. If a factor
 with text categories is passed, a warning is issued directing the user
-to jfreq() instead. Also accepts a simple numeric vector. Supports
+to \code{jfreq()} instead. Also accepts a simple numeric vector. Supports
 grouped descriptives via the \code{by} parameter.
+
+Haven-labelled variables are reported as \code{haven_labelled (Categorical)}
+in the type line; the uninformative \code{vctrs_vctr} class is suppressed.
 }
 \examples{
 jdesc(mtcars, mpg)

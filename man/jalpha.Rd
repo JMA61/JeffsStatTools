@@ -26,6 +26,11 @@ scratch with no external package dependencies beyond base R.
 Handles haven-labelled variables automatically. Detects potentially
 reverse-coded or misfit items.
 }
+\details{
+A red "Reliability Analysis" title is printed first, followed by the
+case processing summary, overall alpha, item statistics, and
+item-total statistics.
+}
 \examples{
 jalpha(attitude, rating, complaints, privileges, learning, raises)
 

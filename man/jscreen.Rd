@@ -24,6 +24,10 @@ cases, variable types, missing data counts and percentages, and
 potential outliers for numeric variables. Handles haven-labelled
 variables by reporting their labelled status.
 }
+\details{
+A red "Data Screening" title is printed first, followed by a dataset
+summary, variable labels (if present), and the screening table.
+}
 \examples{
 jscreen(mtcars)
 jscreen(mtcars, outlier.sd = 2.5)
