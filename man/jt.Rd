@@ -12,6 +12,7 @@ jt(
   effect.size = FALSE,
   levene = FALSE,
   ci = FALSE,
+  subset = NULL,
   labels = TRUE,
   full = FALSE
 )
@@ -36,6 +37,10 @@ of variance. Ignored when paired = TRUE.}
 \item{ci}{Logical. If TRUE, adds 95\\% confidence interval for the
 mean difference.}
 
+\item{subset}{An optional unquoted logical expression (e.g.
+\code{Gender == 1}) to filter cases for this call only. Applied after
+jcomplete and jfilter. Does not affect other function calls.}
+
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
 
@@ -59,8 +64,14 @@ A red title identifying the test type is printed first, followed by
 variable labels (if present), then the results tables.
 }
 \examples{
+# With explicit data frame
 jt(mpg ~ am, data = mtcars)
 jt(mpg ~ am, data = mtcars, welch = TRUE)
 jt(mpg ~ am, data = mtcars, full = TRUE)
+
+# Using juse() default
+juse(mtcars)
+jt(mpg ~ am)
+jt(mpg ~ am, full = TRUE)
 
 }

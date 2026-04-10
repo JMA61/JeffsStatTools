@@ -4,13 +4,17 @@
 \alias{jfreq}
 \title{SPSS-like frequency tables for categorical variables}
 \usage{
-jfreq(data, ..., labels = TRUE)
+jfreq(data, ..., subset = NULL, labels = TRUE)
 }
 \arguments{
 \item{data}{A data frame, or a vector.}
 
 \item{...}{Unquoted variable name(s) within \code{data} (ignored if
 \code{data} is a vector).}
+
+\item{subset}{An optional unquoted logical expression (e.g.
+\code{Gender == 1}) to filter cases for this call only. Applied after
+jcomplete and jfilter. Does not affect other function calls.}
 
 \item{labels}{Logical. If \code{TRUE} (default), prints the variable type
 and label (or "None") beneath the title.}
@@ -37,7 +41,16 @@ uninformative \code{vctrs_vctr} class. Variable labels are shown for all
 variable types, not only haven-labelled ones.
 }
 \examples{
+# With explicit data frame
+jfreq(mtcars, cyl)
 jfreq(mtcars, cyl, gear)
-jfreq(c("Male", "Female", "Male", "Female", "Male"))
+
+# Using juse() default
+juse(mtcars)
+jfreq(, cyl)
+jfreq(, cyl, gear)
+
+# With a vector directly
+jfreq(mtcars$gear)
 
 }

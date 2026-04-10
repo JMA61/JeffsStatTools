@@ -4,7 +4,7 @@
 \alias{jdesc}
 \title{Descriptive statistics for one or more variables}
 \usage{
-jdesc(data, ..., by = NULL, labels = TRUE)
+jdesc(data, ..., by = NULL, subset = NULL, labels = TRUE)
 }
 \arguments{
 \item{data}{A data frame, or a numeric vector.}
@@ -14,6 +14,10 @@ jdesc(data, ..., by = NULL, labels = TRUE)
 \item{by}{An optional unquoted grouping variable name. When provided,
 descriptives are computed separately for each group, with a separate
 titled table per dependent variable.}
+
+\item{subset}{An optional unquoted logical expression (e.g.
+\code{Gender == 1}) to filter cases for this call only. Applied after
+jcomplete and jfilter. Does not affect other function calls.}
 
 \item{labels}{Logical. If \code{TRUE} (default), prints the variable type
 and label (or "None") for each variable before the table.}
@@ -43,9 +47,18 @@ Haven-labelled variables are reported as \code{haven_labelled (Categorical)}
 in the type line; the uninformative \code{vctrs_vctr} class is suppressed.
 }
 \examples{
+# With explicit data frame
 jdesc(mtcars, mpg)
 jdesc(mtcars, mpg, hp, wt)
-jdesc(c(10, 20, 30, 40, 50))
 jdesc(mtcars, mpg, by = am)
+
+# Using juse() default
+juse(mtcars)
+jdesc(, mpg)
+jdesc(, mpg, hp, wt)
+jdesc(, mpg, by = am)
+
+# With a vector directly
+jdesc(mtcars$mpg)
 
 }

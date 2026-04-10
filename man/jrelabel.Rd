@@ -60,8 +60,9 @@ df$StatusR <- jrelabel(df, StatusR, var_label = "Employment Status")
 # Add just value labels
 df$StatusR <- jrelabel(df, StatusR, labels = "1=Yes; 0=No")
 
-# Fix or update existing labels (silently overwrites)
-df$StatusR <- jrelabel(df, StatusR, labels = "1=Active; 0=Inactive")
+# Using juse() default
+juse(df)
+df$StatusR <- jrelabel(, StatusR, labels = "1=Active; 0=Inactive")
 
 }
 \seealso{

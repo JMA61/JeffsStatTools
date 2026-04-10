@@ -4,12 +4,16 @@
 \alias{jlm}
 \title{SPSS-like linear regression output with standardised coefficients}
 \usage{
-jlm(formula, data, labels = TRUE)
+jlm(formula, data, subset = NULL, labels = TRUE)
 }
 \arguments{
 \item{formula}{A model formula, e.g. \code{y ~ x1 + x2}.}
 
 \item{data}{A data frame containing variables referenced in \code{formula}.}
+
+\item{subset}{An optional unquoted logical expression (e.g.
+\code{Gender == 1}) to filter cases for this call only. Applied after
+jcomplete and jfilter. Does not affect other function calls.}
 
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
@@ -36,6 +40,11 @@ Handles haven-labelled variables by converting them appropriately before
 fitting the model.
 }
 \examples{
+# With explicit data frame
 jlm(mpg ~ hp + wt, data = mtcars)
+
+# Using juse() default
+juse(mtcars)
+jlm(mpg ~ hp + wt)
 
 }

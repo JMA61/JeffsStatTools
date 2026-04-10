@@ -112,6 +112,11 @@ df$gearR4 <- jrecode(df, gear,
                      map    = "3=1; 4=2; else=NA",
                      labels = "1=Three gears; 2=Four gears")
 
+# Using juse() default
+juse(df)
+df$gearR5 <- jrecode(, gear, map = "3=1; 4=2; 5=3",
+                      labels = "1=Three; 2=Four; 3=Five")
+
 }
 \seealso{
 \code{\link{jrelabel}} for applying labels to an existing variable

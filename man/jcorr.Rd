@@ -4,7 +4,7 @@
 \alias{jcorr}
 \title{Bivariate correlation matrix with p values and pairwise N}
 \usage{
-jcorr(data, ..., method = "pearson", labels = TRUE)
+jcorr(data, ..., method = "pearson", subset = NULL, labels = TRUE)
 }
 \arguments{
 \item{data}{A data frame.}
@@ -13,6 +13,10 @@ jcorr(data, ..., method = "pearson", labels = TRUE)
 
 \item{method}{Character. Correlation method: "pearson" (default),
 "spearman", or "kendall".}
+
+\item{subset}{An optional unquoted logical expression (e.g.
+\code{Gender == 1}) to filter cases for this call only. Applied after
+jcomplete and jfilter. Does not affect other function calls.}
 
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
@@ -33,7 +37,12 @@ A red title identifying the correlation method is printed first,
 followed by variable labels (if present), then the matrix.
 }
 \examples{
+# With explicit data frame
 jcorr(mtcars, mpg, hp, wt)
 jcorr(mtcars, mpg, hp, wt, method = "spearman")
+
+# Using juse() default
+juse(mtcars)
+jcorr(, mpg, hp, wt)
 
 }

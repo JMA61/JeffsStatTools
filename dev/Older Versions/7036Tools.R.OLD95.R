@@ -1,4 +1,3 @@
-
 # -- Internal helpers ----------------------------------------------------------
 
 #' Internal helper: format a class vector for readable display
@@ -41,7 +40,7 @@
 
 #' Internal helper: print variable label legend
 #'
-#' Used by jt, jaov, jcorr, jcrosstab, jscreen, and jalpha.
+#' Used by jt, jaov, jcorr, jchisq, jscreen, and jalpha.
 #'
 #' @keywords internal
 .print_var_labels <- function(data, var_names) {
@@ -61,347 +60,20 @@
   }
 }
 
-#' Internal helper: print a formatted table with precise column alignment
+#' Internal helper: print a knitr::kable table without extra leading blank lines
 #'
-#' Purpose-built table printer that replaces knitr::kable() for console output.
-#' Provides right-justified numbers, left-justified text, clean separator lines,
-#' and consistent indentation. No external dependencies --- pure base R.
-#'
-#' @param df A data frame to print.
-#' @param col.names Optional character vector of column headers. If NULL,
-#'   uses \code{names(df)}.
-#' @param row.names Logical. If TRUE, includes row names as the first column.
-#' @param align Optional character vector of alignment codes ("l", "r", "c"),
-#'   one per displayed column. If NULL, auto-detects: numeric = right,
-#'   character/other = left.
-#' @param caption Optional title string printed above the table.
-#' @param indent Number of leading spaces for each line. Default 2.
+#' knitr::kable() can prepend one or more newlines to its output (especially
+#' when a caption is used), which causes unwanted extra blank lines in console
+#' output. This wrapper strips any such leading newlines before printing, so
+#' callers can control vertical spacing precisely with explicit cat() calls.
 #'
 #' @keywords internal
-.jst_print_table <- function(df, col.names = NULL, row.names = TRUE,
-                             align = NULL, caption = NULL, indent = 2) {
-
-  headers <- if (!is.null(col.names)) col.names else names(df)
-
-  # Build display matrix
-  display_cols <- lapply(seq_len(ncol(df)), function(j) {
-    col <- df[[j]]
-    if (is.numeric(col)) {
-      ifelse(is.na(col), "", format(col, trim = TRUE))
-    } else {
-      as.character(ifelse(is.na(col), "", col))
-    }
-  })
-  display <- do.call(cbind, display_cols)
-
-  if (row.names && !is.null(rownames(df)) &&
-      !identical(rownames(df), as.character(seq_len(nrow(df))))) {
-    display <- cbind(rownames(df), display)
-    headers <- c("", headers)
-  }
-
-  n_cols <- ncol(display)
-  n_rows <- nrow(display)
-
-  # Auto-detect alignment
-  if (is.null(align)) {
-    align <- character(n_cols)
-    for (j in seq_len(n_cols)) {
-      if (row.names && j == 1 && !identical(rownames(df), as.character(seq_len(nrow(df))))) {
-        align[j] <- "l"
-      } else {
-        orig_col <- if (row.names && !identical(rownames(df), as.character(seq_len(nrow(df))))) j - 1 else j
-        if (orig_col >= 1 && orig_col <= ncol(df) && is.numeric(df[[orig_col]])) {
-          align[j] <- "r"
-        } else {
-          align[j] <- "l"
-        }
-      }
-    }
-  }
-
-  # Column widths
-  col_widths <- integer(n_cols)
-  for (j in seq_len(n_cols)) {
-    data_widths <- nchar(trimws(display[, j]))
-    col_widths[j] <- max(nchar(headers[j]), max(data_widths, 0L, na.rm = TRUE))
-  }
-
-  gap    <- "  "
-  prefix <- paste(rep(" ", indent), collapse = "")
-
-  fmt_cell <- function(text, width, alignment) {
-    text <- trimws(text)
-    switch(alignment,
-           "r" = formatC(text, width = width, flag = " "),
-           "c" = formatC(text, width = width, format = "s"),
-           formatC(text, width = -width, flag = "-")
-    )
-  }
-
-  if (!is.null(caption)) {
-    cat(prefix, caption, "\n", sep = "")
-  }
-
-  # Header
-  header_cells <- vapply(seq_len(n_cols), function(j) {
-    fmt_cell(headers[j], col_widths[j], align[j])
-  }, character(1))
-  cat(prefix, paste(header_cells, collapse = gap), "\n", sep = "")
-
-  # Separator
-  sep_cells <- vapply(col_widths, function(w) {
-    paste(rep("-", w), collapse = "")
-  }, character(1))
-  cat(prefix, paste(sep_cells, collapse = gap), "\n", sep = "")
-
-  # Data rows
-  for (i in seq_len(n_rows)) {
-    row_cells <- vapply(seq_len(n_cols), function(j) {
-      fmt_cell(display[i, j], col_widths[j], align[j])
-    }, character(1))
-    cat(prefix, paste(row_cells, collapse = gap), "\n", sep = "")
-  }
-}
-
-
-
-
-# -----------------------------------------------------------------------------
-# Data pipeline helpers: jcomplete / jfilter storage and application
-# These helpers manage per-dataset filter and complete-case settings,
-# apply them in the correct order, and generate info-line messages.
-# -----------------------------------------------------------------------------
-
-#' @keywords internal
-.jst_get_filter <- function(data_name) {
-  all_filters <- getOption(".jst_filter", default = list())
-  all_filters[[data_name]]
-}
-
-#' @keywords internal
-.jst_get_complete <- function(data_name) {
-  all_complete <- getOption(".jst_complete", default = list())
-  all_complete[[data_name]]
-}
-
-#' @keywords internal
-.jst_set_filter <- function(data_name, settings) {
-  all_filters <- getOption(".jst_filter", default = list())
-  all_filters[[data_name]] <- settings
-  options(.jst_filter = all_filters)
-}
-
-#' @keywords internal
-.jst_set_complete <- function(data_name, settings) {
-  all_complete <- getOption(".jst_complete", default = list())
-  all_complete[[data_name]] <- settings
-  options(.jst_complete = all_complete)
-}
-
-#' @keywords internal
-.jst_get_dummy <- function(data_name) {
-  all_dummy <- getOption(".jst_dummy", default = list())
-  all_dummy[[data_name]]
-}
-
-#' @keywords internal
-.jst_set_dummy <- function(data_name, settings) {
-  all_dummy <- getOption(".jst_dummy", default = list())
-  all_dummy[[data_name]] <- settings
-  options(.jst_dummy = all_dummy)
-}
-
-#' Internal helper: expand registered dummy variables in a formula and data frame
-#'
-#' Checks for jdummy registrations matching variables in the formula,
-#' creates temporary dummy columns in the data frame, rewrites the formula,
-#' and returns updated data, formula, reference category labels, and dummy
-#' coefficient names. Used by jlm and future regression functions.
-#'
-#' @param data The data frame.
-#' @param formula The model formula.
-#' @param data_name Character string name of the data frame (for looking up registrations).
-#'
-#' @return A list with components:
-#'   \describe{
-#'     \item{data}{The data frame with dummy columns added.}
-#'     \item{formula}{The updated formula with dummy names.}
-#'     \item{ref_cats}{Character vector of "VarName = RefLabel" strings.}
-#'     \item{dummy_coef_names}{Character vector of dummy column names (for blanking Std B).}
-#'   }
-#'
-#' @keywords internal
-.jst_expand_dummies <- function(data, formula, data_name) {
-
-  model_vars       <- all.vars(formula)
-  dummy_regs       <- .jst_get_dummy(data_name)
-  ref_cats         <- character(0)
-  dummy_coef_names <- character(0)
-
-  if (!is.null(dummy_regs) && length(dummy_regs) > 0) {
-    formula_str <- deparse(formula, width.cutoff = 500)
-    dv_name     <- model_vars[1]
-
-    for (reg in dummy_regs) {
-      if (reg$var_name %in% model_vars && reg$var_name != dv_name) {
-        # Create dummy columns in data
-        orig_col <- as.numeric(data[[reg$var_name]])
-        for (j in seq_along(reg$non_ref_idx)) {
-          idx   <- reg$non_ref_idx[j]
-          dname <- reg$dummy_names[j]
-          data[[dname]] <- ifelse(is.na(orig_col), NA_integer_,
-                                  as.integer(orig_col == reg$codes[idx]))
-          dummy_coef_names <- c(dummy_coef_names, dname)
-        }
-
-        # Replace variable in formula string with dummy names
-        dummy_plus <- paste(reg$dummy_names, collapse = " + ")
-        formula_str <- gsub(paste0("\\b", reg$var_name, "\\b"),
-                            dummy_plus, formula_str)
-
-        ref_cats <- c(ref_cats, paste0(reg$var_name, " = ", reg$ref_label))
-      }
-    }
-
-    formula    <- stats::as.formula(formula_str)
-  }
-
-  list(data = data, formula = formula, ref_cats = ref_cats,
-       dummy_coef_names = dummy_coef_names)
-}
-
-#' Internal helper: apply the full data pipeline and return filtered data + messages
-#'
-#' Order of operations:
-#' \enumerate{
-#'   \item jcomplete (listwise deletion for registered variables)
-#'   \item jfilter (substantive filtering expression)
-#'   \item subset (one-off per-call filter)
-#' }
-#'
-#' When the dataset was specified explicitly (not via juse default), jcomplete
-#' and jfilter are skipped and a note is printed if settings exist.
-#'
-#' @param data The data frame.
-#' @param data_name Character string name of the data frame.
-#' @param is_default Logical. TRUE if the data frame came from juse().
-#' @param subset_expr An unevaluated expression for one-off subsetting, or NULL.
-#' @param envir The environment in which to evaluate expressions.
-#'
-#' @return A list with components:
-#'   \describe{
-#'     \item{data}{The filtered data frame.}
-#'     \item{msgs}{Character vector of info-line messages to print.}
-#'   }
-#'
-#' @keywords internal
-.jst_apply_pipeline <- function(data, data_name, is_default,
-                                subset_expr = NULL, envir = parent.frame()) {
-
-  msgs <- character(0)
-  n_original <- nrow(data)
-
-  if (is_default) {
-
-    # -- Step 1: jcomplete ---------------------------------------------------
-    cs <- .jst_get_complete(data_name)
-    if (!is.null(cs)) {
-      if (cs$active) {
-        valid_vars <- cs$vars[cs$vars %in% names(data)]
-        if (length(valid_vars) > 0) {
-          n_before      <- nrow(data)
-          complete_mask <- stats::complete.cases(data[, valid_vars, drop = FALSE])
-          data          <- data[complete_mask, , drop = FALSE]
-          n_after       <- nrow(data)
-          n_excluded    <- n_before - n_after
-          if (n_excluded > 0) {
-            msgs <- c(msgs, paste0(
-              "(jcomplete active: ", n_after, " of ", n_before,
-              " cases \u2014 ", n_excluded, " excluded due to missing values)"))
-          } else {
-            msgs <- c(msgs, paste0(
-              "(jcomplete active: ", n_after, " of ", n_before,
-              " cases \u2014 no missing values)"))
-          }
-        }
-      } else {
-        msgs <- c(msgs, "(jcomplete set but inactive)")
-      }
-    }
-
-    # -- Step 2: jfilter -----------------------------------------------------
-    fs <- .jst_get_filter(data_name)
-    if (!is.null(fs)) {
-      if (fs$active) {
-        n_before <- nrow(data)
-        mask <- tryCatch(
-          eval(fs$expr, data, envir),
-          error = function(e) {
-            warning("Filter expression could not be evaluated: ",
-                    conditionMessage(e), call. = FALSE)
-            rep(TRUE, nrow(data))
-          }
-        )
-        mask[is.na(mask)] <- FALSE
-        data    <- data[mask, , drop = FALSE]
-        n_after <- nrow(data)
-        msgs <- c(msgs, paste0(
-          "(Filter active: ", fs$expr_str, " \u2014 ",
-          n_after, " of ", n_before, " cases selected)"))
-      } else {
-        msgs <- c(msgs, "(Filter set but inactive)")
-      }
-    }
-
-  } else {
-    # Explicit dataset — note if any defaults exist for the juse dataset
-    default_name <- getOption(".jst_default_data", default = NULL)
-    if (!is.null(default_name)) {
-      has_complete <- !is.null(.jst_get_complete(default_name))
-      has_filter   <- !is.null(.jst_get_filter(default_name))
-      if (has_complete && has_filter) {
-        msgs <- c(msgs, paste0(
-          "(Note: jcomplete and jfilter not applied",
-          " \u2014 data frame specified explicitly)"))
-      } else if (has_complete) {
-        msgs <- c(msgs, paste0(
-          "(Note: jcomplete not applied",
-          " \u2014 data frame specified explicitly)"))
-      } else if (has_filter) {
-        msgs <- c(msgs, paste0(
-          "(Note: jfilter not applied",
-          " \u2014 data frame specified explicitly)"))
-      }
-    }
-  }
-
-  # -- Step 3: subset (always applies) -------------------------------------
-  if (!is.null(subset_expr)) {
-    n_before <- nrow(data)
-    mask <- tryCatch(
-      eval(subset_expr, data, envir),
-      error = function(e) {
-        stop("Subset expression could not be evaluated: ",
-             conditionMessage(e), call. = FALSE)
-      }
-    )
-    mask[is.na(mask)] <- FALSE
-    data    <- data[mask, , drop = FALSE]
-    n_after <- nrow(data)
-    msgs <- c(msgs, paste0(
-      "(Subset: ", deparse(subset_expr), " \u2014 ",
-      n_after, " of ", n_before, " cases remaining)"))
-  }
-
-  list(data = data, msgs = msgs)
-}
-
-#' Internal helper: print info-line messages generated by the pipeline
-#'
-#' @keywords internal
-.jst_print_msgs <- function(msgs) {
-  for (m in msgs) cat(m, "\n")
+.print_kable <- function(...) {
+  tbl     <- knitr::kable(...)
+  tbl_str <- paste(as.character(tbl), collapse = "\n")
+  tbl_str <- sub("^\n+", "", tbl_str)
+  cat(tbl_str)
+  cat("\n")
 }
 
 #' Internal helper: check that variable names exist in a data frame
@@ -473,20 +145,13 @@
 
   suspicious <- numeric(0)
 
-  # Rule 1: negative values when all others are positive AND
-  # the absolute magnitude is at least 3x the max positive value
+  # Rule 1: negative values when all others are positive
   neg_vals <- vals[vals < 0]
   pos_vals <- vals[vals >= 0]
 
   if (length(neg_vals) > 0 && length(pos_vals) >= 2) {
-    pos_max <- max(pos_vals)
-    if (pos_max > 0) {
-      suspicious <- c(suspicious, neg_vals[abs(neg_vals) >= 3 * pos_max])
-    } else {
-      suspicious <- c(suspicious, neg_vals)
-    }
+    suspicious <- c(suspicious, neg_vals)
   }
-
 
   # Rule 2: absolute magnitude >= 5x the max of remaining values
   for (v in vals) {
@@ -516,7 +181,7 @@
     stop(paste0(
       "If '", data_expr_str, "' is a variable name in '", default_df,
       "', add a leading comma: ", fn_name, "(, ", data_expr_str, ").\n",
-      "Otherwise, check spelling and capitalisation, or verify the data frame is loaded."
+      "Otherwise, check spelling and capitalisation."
     ), call. = FALSE)
   } else {
     stop(conditionMessage(original_error), call. = FALSE)
@@ -586,13 +251,6 @@
     # new value
     new_val <- suppressWarnings(as.numeric(rhs))
     if (is.na(new_val)) {
-      # Detect commas used instead of semicolons between rules
-      if (grepl(",", rhs) && grepl("=", rhs)) {
-        stop(paste0(
-          "It looks like commas were used to separate rules in the map string. ",
-          "Use semicolons instead, e.g. map = \"1=5; 2=4; 3=3\"."
-        ), call. = FALSE)
-      }
       stop(paste0(
         "Invalid new value '", rhs, "' in map rule '", rule, "'. ",
         "New values must be numeric."
@@ -688,13 +346,6 @@
 #' @return Invisibly returns \code{NULL}. Called for its side effect of
 #'   setting, displaying, or clearing the default data frame.
 #'
-#' @note \code{juse()} stores the \emph{name} of the data frame, not a copy
-#'   of the data. This means any changes you make to the data frame (adding
-#'   columns, recoding variables, etc.) are automatically reflected in
-#'   subsequent function calls. This differs from base R's \code{attach()},
-#'   which creates a snapshot that can become stale after modifications.
-#'   \code{juse()} is the recommended approach for this package.
-#'
 #' @examples
 #' \donttest{
 #' juse(mtcars)           # Set mtcars as the default
@@ -741,644 +392,6 @@ juse <- function(data) {
 }
 
 
-# -- jfilter ------------------------------------------------------------------
-
-#' Set, activate, deactivate, or clear a global data filter
-#'
-#' @description
-#' \code{jfilter()} sets a persistent filter expression that is applied
-#' automatically by all JeffsStatTools analysis functions when the default
-#' data frame (set by \code{juse()}) is in use. This is analogous to
-#' the SPSS FILTER command.
-#'
-#' The filter is stored per dataset, so switching \code{juse()} between
-#' datasets preserves each dataset's filter independently.
-#'
-#' When a data frame is specified explicitly in a function call (e.g.
-#' \code{jfreq(PopulationData, Computer)}), the filter is not applied
-#' for that call.
-#'
-#' @param expr A logical expression (e.g. \code{Gender == 1}), or one
-#'   of the following special values:
-#'   \describe{
-#'     \item{\code{off}}{Deactivate the filter but remember the expression.}
-#'     \item{\code{on}}{Reactivate a previously deactivated filter.}
-#'     \item{\code{NULL}}{Clear the filter entirely (forget the expression).}
-#'   }
-#'   If omitted, prints the current filter status.
-#'
-#' @return Invisibly returns \code{NULL}. Called for its side effect.
-#'
-#' @examples
-#' \donttest{
-#' juse(mtcars)
-#' jfilter(cyl == 4)       # Set and activate
-#' jdesc(, mpg)            # Uses only 4-cylinder cars
-#' jfilter(off)            # Deactivate
-#' jdesc(, mpg)            # Uses all cars
-#' jfilter(on)             # Reactivate
-#' jfilter()               # Check status
-#' jfilter(NULL)           # Clear entirely
-#' }
-#'
-#' @export
-jfilter <- function(expr) {
-
-  # Get the current default dataset name
-  default_name <- getOption(".jst_default_data", default = NULL)
-
-  if (missing(expr)) {
-    # jfilter() — print status
-    if (is.null(default_name)) {
-      message("No default data frame set. Use juse() first.")
-      return(invisible(NULL))
-    }
-    fs <- .jst_get_filter(default_name)
-    if (is.null(fs)) {
-      message("No filter set for ", default_name, ".")
-    } else if (fs$active) {
-      message("Filter active for ", default_name, ": ", fs$expr_str)
-    } else {
-      message("Filter set but inactive for ", default_name, ".")
-    }
-    return(invisible(NULL))
-  }
-
-  # Capture unevaluated expression BEFORE any evaluation
-  raw_expr <- substitute(expr)
-  expr_str <- deparse(raw_expr, width.cutoff = 500)
-
-  # jfilter(NULL) — clear (substitute(NULL) returns NULL)
-  if (is.null(raw_expr)) {
-    if (!is.null(default_name)) {
-      .jst_set_filter(default_name, NULL)
-      message("Filter cleared for ", default_name, ".")
-    } else {
-      message("No default data frame set. Nothing to clear.")
-    }
-    return(invisible(NULL))
-  }
-
-  # jfilter(off) / jfilter(on)
-  if (is.symbol(raw_expr)) {
-    sym_name <- as.character(raw_expr)
-    if (tolower(sym_name) == "off") {
-      if (is.null(default_name)) {
-        message("No default data frame set.")
-        return(invisible(NULL))
-      }
-      fs <- .jst_get_filter(default_name)
-      if (is.null(fs)) {
-        message("No filter set for ", default_name, ". Nothing to deactivate.")
-      } else {
-        fs$active <- FALSE
-        .jst_set_filter(default_name, fs)
-        message("Filter deactivated for ", default_name, ".")
-      }
-      return(invisible(NULL))
-    }
-    if (tolower(sym_name) == "on") {
-      if (is.null(default_name)) {
-        message("No default data frame set.")
-        return(invisible(NULL))
-      }
-      fs <- .jst_get_filter(default_name)
-      if (is.null(fs)) {
-        message("No filter set for ", default_name, ". Use jfilter(expression) to set one.")
-      } else {
-        fs$active <- TRUE
-        .jst_set_filter(default_name, fs)
-        message("Filter reactivated for ", default_name, ": ", fs$expr_str)
-      }
-      return(invisible(NULL))
-    }
-  }
-
-  # jfilter(expression) — set and activate
-  if (is.null(default_name)) {
-    stop("No default data frame set. Use juse() first.", call. = FALSE)
-  }
-
-  .jst_set_filter(default_name, list(
-    expr     = raw_expr,
-    expr_str = expr_str,
-    active   = TRUE
-  ))
-  message("Filter set and activated for ", default_name, ": ", expr_str)
-  invisible(NULL)
-}
-
-
-# -- jcomplete ----------------------------------------------------------------
-
-#' Set a listwise complete-case filter for matching N across analyses
-#'
-#' @description
-#' \code{jcomplete()} registers a set of variables and activates a listwise
-#' deletion filter that excludes any case with a missing value on any of
-#' the registered variables. This ensures that all subsequent analyses use
-#' the same set of complete cases, which is essential when preliminary
-#' analyses need to match the N of a final regression model.
-#'
-#' The setting is stored per dataset, so switching \code{juse()} between
-#' datasets preserves each dataset's setting independently.
-#'
-#' When a data frame is specified explicitly in a function call, the
-#' jcomplete filter is not applied for that call.
-#'
-#' @param data A data frame. If omitted, uses the default set by
-#'   \code{juse()}. Pass \code{NULL} to clear the filter entirely.
-#'   Pass the bare word \code{off} to deactivate, or \code{on} to
-#'   reactivate. Call with no arguments to check the current status.
-#' @param ... Unquoted variable names to include in the listwise check.
-#'
-#' @return Invisibly returns \code{NULL}. Called for its side effect.
-#'
-#' @examples
-#' \donttest{
-#' juse(mtcars)
-#' jcomplete(, mpg, hp, wt, am)
-#' jdesc(, mpg)                   # Uses only complete cases on those 4 vars
-#' jcomplete(off)                 # Deactivate
-#' jcomplete(on)                  # Reactivate
-#' jcomplete()                    # Check status
-#' jcomplete(NULL)                # Clear entirely
-#' }
-#'
-#' @export
-jcomplete <- function(data, ...) {
-
-  default_name <- getOption(".jst_default_data", default = NULL)
-
-  # -- No arguments: print status -------------------------------------------
-  if (missing(data) && ...length() == 0) {
-    if (is.null(default_name)) {
-      message("No default data frame set. Use juse() first.")
-      return(invisible(NULL))
-    }
-    cs <- .jst_get_complete(default_name)
-    if (is.null(cs)) {
-      message("No jcomplete filter set for ", default_name, ".")
-    } else if (cs$active) {
-      calling_env <- parent.frame()
-      if (exists(default_name, envir = calling_env)) {
-        df <- get(default_name, envir = calling_env)
-        valid_vars <- cs$vars[cs$vars %in% names(df)]
-        if (length(valid_vars) > 0) {
-          n_total    <- nrow(df)
-          n_complete <- sum(stats::complete.cases(df[, valid_vars, drop = FALSE]))
-          message("jcomplete active for ", default_name, ": ",
-                  n_complete, " of ", n_total, " complete cases")
-          message("Variables: ", paste(cs$vars, collapse = ", "))
-        }
-      } else {
-        message("jcomplete active for ", default_name)
-        message("Variables: ", paste(cs$vars, collapse = ", "))
-      }
-    } else {
-      message("jcomplete set but inactive for ", default_name, ".")
-      message("Variables: ", paste(cs$vars, collapse = ", "))
-    }
-    return(invisible(NULL))
-  }
-
-  # -- Capture substitute BEFORE any evaluation ------------------------------
-  # This must happen before is.null(data) or any other use of data,
-  # otherwise bare symbols like off/on cause "object not found" errors.
-  raw_data <- if (!missing(data)) substitute(data) else NULL
-
-  # -- jcomplete(off) / jcomplete(on) — check BEFORE evaluating data --------
-  if (!is.null(raw_data) && is.symbol(raw_data) && ...length() == 0) {
-    sym_name <- tolower(as.character(raw_data))
-    if (sym_name == "off") {
-      if (is.null(default_name)) {
-        message("No default data frame set.")
-        return(invisible(NULL))
-      }
-      cs <- .jst_get_complete(default_name)
-      if (is.null(cs)) {
-        message("No jcomplete filter set for ", default_name, ".")
-      } else {
-        cs$active <- FALSE
-        .jst_set_complete(default_name, cs)
-        message("jcomplete deactivated for ", default_name, ".")
-      }
-      return(invisible(NULL))
-    }
-    if (sym_name == "on") {
-      if (is.null(default_name)) {
-        message("No default data frame set.")
-        return(invisible(NULL))
-      }
-      cs <- .jst_get_complete(default_name)
-      if (is.null(cs)) {
-        message("No jcomplete filter set for ", default_name,
-                ". Use jcomplete(, var1, var2, ...) to set one.")
-      } else {
-        cs$active <- TRUE
-        .jst_set_complete(default_name, cs)
-        message("jcomplete reactivated for ", default_name, ".")
-      }
-      return(invisible(NULL))
-    }
-  }
-
-  # -- Now safe to evaluate data ---------------------------------------------
-  if (!missing(data)) {
-    data <- force(data)
-  }
-
-  # -- jcomplete(NULL) — clear -----------------------------------------------
-  if (!missing(data) && is.null(data)) {
-    if (!is.null(default_name)) {
-      .jst_set_complete(default_name, NULL)
-      message("jcomplete filter cleared for ", default_name, ".")
-    } else {
-      message("No default data frame set. Nothing to clear.")
-    }
-    return(invisible(NULL))
-  }
-
-  # -- jcomplete(, var1, var2, ...) — set and activate -----------------------
-
-  # Resolve data frame
-  .jst_data_name <- NULL
-  if (missing(data)) {
-    resolved <- .jst_resolve_data(envir = parent.frame())
-    data <- resolved$data
-    .jst_data_name <- resolved$name
-  } else {
-    .jst_data_name <- deparse(substitute(data))
-  }
-
-  variables      <- rlang::enquos(...)
-  variable_names <- vapply(variables, rlang::quo_name, character(1))
-
-  if (length(variable_names) == 0) {
-    stop("Provide at least one variable name, e.g. jcomplete(, DV, IV1, IV2).",
-         call. = FALSE)
-  }
-
-  .jst_check_vars(data, variable_names, .jst_data_name)
-
-  # Compute summary
-  n_total <- nrow(data)
-  missing_info <- data.frame(
-    Variable  = variable_names,
-    N         = rep(n_total, length(variable_names)),
-    Missing   = vapply(variable_names, function(v) sum(is.na(data[[v]])), integer(1)),
-    stringsAsFactors = FALSE
-  )
-  missing_info$Pct <- sprintf("%.1f%%", missing_info$Missing / n_total * 100)
-
-  n_complete <- sum(stats::complete.cases(data[, variable_names, drop = FALSE]))
-  n_excluded <- n_total - n_complete
-
-  # Store settings
-  .jst_set_complete(.jst_data_name, list(
-    vars   = variable_names,
-    active = TRUE
-  ))
-
-  # Print summary
-  .cat_red("Listwise Case Filter\n")
-  cat("(Using default data frame:", .jst_data_name, ")\n\n")
-
-  .jst_print_table(missing_info,
-                   col.names = c("Variable", "N", "Missing", "% Missing"),
-                   row.names = FALSE)
-
-  cat("\n  Complete cases: ", n_complete, " of ", n_total,
-      " (", sprintf("%.1f", n_complete / n_total * 100), "%)\n", sep = "")
-  if (n_excluded > 0) {
-    cat("  Listwise filter activated \u2014 ", n_excluded, " cases excluded.\n", sep = "")
-  } else {
-    cat("  Listwise filter activated \u2014 no cases excluded (no missing values).\n")
-  }
-
-  invisible(NULL)
-}
-
-
-# -- jdummy -------------------------------------------------------------------
-
-#' Register categorical variables for dummy coding in regression
-#'
-#' @description
-#' \code{jdummy()} registers a categorical variable so that \code{jlm()}
-#' automatically expands it into dummy (indicator) variables when it appears
-#' in a regression formula. The original data frame is never modified.
-#'
-#' Registrations are stored per dataset, so switching \code{juse()} between
-#' datasets preserves each dataset's registrations independently.
-#'
-#' @param data A data frame, or omit to use the \code{juse()} default.
-#'   Pass \code{NULL} to clear all registrations.
-#' @param var Unquoted variable name to register. Omit (along with data)
-#'   to display all current registrations.
-#' @param ref The reference category (excluded from the regression model).
-#'   Can be a numeric code, a quoted label name, or \code{"first"}
-#'   (default) or \code{"last"}.
-#' @param show Logical. If \code{TRUE}, prints the dummy coding scheme
-#'   table showing the pattern of 0s and 1s. Default is \code{FALSE}.
-#' @param remove Logical. If \code{TRUE}, removes the registration for
-#'   the specified variable. Default is \code{FALSE}.
-#'
-#' @return Invisibly returns \code{NULL}. Called for its side effect.
-#'
-#' @examples
-#' \donttest{
-#' juse(mtcars)
-#' jdummy(, cyl)                         # Register, first category as reference
-#' jdummy(, cyl, ref = "last")          # Last category as reference
-#' jdummy(, cyl, ref = 6)              # Reference by numeric code
-#' # For haven-labelled variables, use the label name:
-#' # jdummy(, Employment, ref = "Part-Time")
-#' jdummy(, cyl, show = TRUE)          # Show coding scheme
-#' jdummy(, cyl, show = "all")         # Full scheme (for many categories)
-#' jdummy()                             # Show all registrations
-#' jdummy(, cyl, remove = TRUE)        # Remove registration
-#' jdummy(NULL)                         # Clear all
-#' }
-#'
-#' @export
-jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
-
-  default_name <- getOption(".jst_default_data", default = NULL)
-
-  # -- jdummy() — no arguments: show all registrations ----------------------
-  if (missing(data) && missing(var)) {
-    if (is.null(default_name)) {
-      message("No default data frame set. Use juse() first.")
-      return(invisible(NULL))
-    }
-    ds <- .jst_get_dummy(default_name)
-    if (is.null(ds) || length(ds) == 0) {
-      message("No dummy variables registered for ", default_name, ".")
-    } else {
-      .cat_red("Dummy Variable Registrations\n")
-      cat("(Using default data frame:", default_name, ")\n\n")
-      for (reg in ds) {
-        cat("  Variable: ", reg$var_name,
-            " (", reg$var_type, ")\n", sep = "")
-        cat("  Reference category: ", reg$ref_code, ": ", reg$ref_label, "\n", sep = "")
-        cat("  Dummy variables: ", paste(reg$dummy_names, collapse = ", "), "\n", sep = "")
-        cat("  Cases: ", reg$n_total,
-            " (", reg$n_missing, " missing)\n", sep = "")
-
-        # Show coding scheme if requested
-        if (!identical(show, FALSE)) {
-          n_cats <- length(reg$codes)
-          show_all <- is.character(show) && tolower(show) == "all"
-          n_show <- if (show_all) n_cats else min(n_cats, 5)
-
-          all_col_names <- character(n_show)
-          for (i in seq_len(n_show)) {
-            if (i == reg$ref_idx) {
-              all_col_names[i] <- paste0(reg$labels[i], "*")
-            } else {
-              all_col_names[i] <- reg$labels[i]
-            }
-          }
-
-          row_labels <- character(n_show)
-          for (i in 1:n_show) {
-            if (i == reg$ref_idx) {
-              row_labels[i] <- paste0(reg$codes[i], ": ", reg$labels[i], "*")
-            } else {
-              row_labels[i] <- paste0(reg$codes[i], ": ", reg$labels[i])
-            }
-          }
-
-          scheme <- matrix(0L, nrow = n_show, ncol = n_show)
-          for (i in 1:n_show) scheme[i, i] <- 1L
-
-          scheme_df <- as.data.frame(scheme, stringsAsFactors = FALSE)
-          names(scheme_df) <- all_col_names
-          rownames(scheme_df) <- row_labels
-
-          cat("\n  Dummy Coding Scheme:\n\n")
-          .jst_print_table(scheme_df,
-                           col.names = all_col_names,
-                           row.names = TRUE,
-                           indent = 4)
-          cat("\n    * Reference category\n")
-
-          if (n_cats > 5 && !show_all) {
-            cat("    (Showing first 5 of ", n_cats,
-                " categories \u2014 use show = \"all\" for complete table)\n", sep = "")
-          }
-        }
-        cat("\n")
-      }
-    }
-    return(invisible(NULL))
-  }
-
-  # -- jdummy(NULL) — clear all registrations --------------------------------
-  if (!missing(data) && is.null(data)) {
-    if (!is.null(default_name)) {
-      .jst_set_dummy(default_name, NULL)
-      message("All dummy registrations cleared for ", default_name, ".")
-    } else {
-      message("No default data frame set. Nothing to clear.")
-    }
-    return(invisible(NULL))
-  }
-
-  # -- Resolve data frame ----------------------------------------------------
-  .jst_data_name <- NULL
-  if (missing(data)) {
-    resolved <- .jst_resolve_data(envir = parent.frame())
-    data <- resolved$data
-    .jst_data_name <- resolved$name
-  } else {
-    .jst_data_name <- deparse(substitute(data))
-  }
-
-  var_name <- deparse(substitute(var))
-  .jst_check_vars(data, var_name, .jst_data_name)
-
-  # -- jdummy(, var, remove = TRUE) — remove one registration ----------------
-  if (remove) {
-    ds <- .jst_get_dummy(.jst_data_name)
-    if (!is.null(ds)) {
-      ds <- ds[!vapply(ds, function(r) r$var_name == var_name, logical(1))]
-      if (length(ds) == 0) ds <- NULL
-      .jst_set_dummy(.jst_data_name, ds)
-    }
-    message("Dummy registration removed for '", var_name, "' in ", .jst_data_name, ".")
-    return(invisible(NULL))
-  }
-
-  # -- Build registration ---------------------------------------------------
-  col <- data[[var_name]]
-  is_haven <- haven::is.labelled(col)
-
-  var_type <- if (is_haven) "haven_labelled" else if (is.factor(col)) "factor" else "numeric"
-
-  # Extract categories: codes and labels
-  if (is_haven) {
-    val_labels <- labelled::val_labels(col)
-    codes  <- as.numeric(sort(unique(col[!is.na(col)])))
-    labels_vec <- character(length(codes))
-    for (i in seq_along(codes)) {
-      match_idx <- which(val_labels == codes[i])
-      if (length(match_idx) > 0) {
-        labels_vec[i] <- names(val_labels)[match_idx[1]]
-      } else {
-        labels_vec[i] <- as.character(codes[i])
-      }
-    }
-  } else if (is.factor(col)) {
-    lvls <- levels(droplevels(col))
-    codes <- seq_along(lvls)
-    labels_vec <- lvls
-  } else {
-    codes <- sort(unique(col[!is.na(col)]))
-    labels_vec <- as.character(codes)
-  }
-
-  n_cats    <- length(codes)
-  n_total   <- length(col)
-  n_missing <- sum(is.na(col))
-
-  if (n_cats < 2) {
-    stop(paste0("'", var_name, "' has fewer than 2 categories. ",
-                "Cannot create dummy variables."), call. = FALSE)
-  }
-
-  # Determine reference category
-  if (is.character(ref) && tolower(ref) == "first") {
-    ref_idx <- 1
-  } else if (is.character(ref) && tolower(ref) == "last") {
-    ref_idx <- n_cats
-  } else if (is.numeric(ref)) {
-    ref_idx <- which(codes == ref)
-    if (length(ref_idx) == 0) {
-      stop(paste0("Reference code ", ref, " not found in '", var_name,
-                  "'. Available codes: ", paste(codes, collapse = ", ")),
-           call. = FALSE)
-    }
-  } else if (is.character(ref)) {
-    ref_idx <- which(labels_vec == ref)
-    if (length(ref_idx) == 0) {
-      stop(paste0("Reference label '", ref, "' not found in '", var_name,
-                  "'. Available labels: ", paste(labels_vec, collapse = ", ")),
-           call. = FALSE)
-    }
-  } else {
-    ref_idx <- 1
-  }
-
-  ref_code  <- codes[ref_idx]
-  ref_label <- labels_vec[ref_idx]
-
-  # Build dummy variable names
-  non_ref_idx <- setdiff(seq_len(n_cats), ref_idx)
-  if (is_haven && all(nchar(labels_vec) > 0) &&
-      !all(labels_vec == as.character(codes))) {
-    # Use haven labels for names
-    dummy_names <- paste0(var_name, "_", gsub("[^A-Za-z0-9]+", "_", labels_vec[non_ref_idx]))
-  } else {
-    # Use numeric codes
-    dummy_names <- paste0(var_name, "_", codes[non_ref_idx])
-    if (!is_haven) {
-      cat("(Note: ", var_name, " has no value labels \u2014 dummy variables will be named\n",
-          " by numeric code. Use jrelabel() to add descriptive labels.)\n", sep = "")
-    }
-  }
-
-  # Store registration
-  reg <- list(
-    var_name    = var_name,
-    var_type    = var_type,
-    codes       = codes,
-    labels      = labels_vec,
-    ref_idx     = ref_idx,
-    ref_code    = ref_code,
-    ref_label   = ref_label,
-    dummy_names = dummy_names,
-    non_ref_idx = non_ref_idx,
-    n_total     = n_total,
-    n_missing   = n_missing
-  )
-
-  ds <- .jst_get_dummy(.jst_data_name)
-  if (is.null(ds)) ds <- list()
-
-  # Replace existing registration for this variable, or append
-  existing_idx <- which(vapply(ds, function(r) r$var_name == var_name, logical(1)))
-  if (length(existing_idx) > 0) {
-    ds[[existing_idx[1]]] <- reg
-  } else {
-    ds[[length(ds) + 1]] <- reg
-  }
-  .jst_set_dummy(.jst_data_name, ds)
-
-  # Print registration summary
-  .cat_red("Dummy Variable Registration\n")
-  cat("(Using default data frame:", .jst_data_name, ")\n\n")
-  cat("  Variable: ", var_name, " (", var_type, ")\n", sep = "")
-  cat("  Reference category: ", ref_code, ": ", ref_label, "\n", sep = "")
-  cat("  Dummy variables: ", paste(dummy_names, collapse = ", "), "\n", sep = "")
-  cat("  Cases: ", n_total, " (", n_missing, " missing)\n", sep = "")
-
-  # Show coding scheme if requested
-  if (!identical(show, FALSE)) {
-    cat("\n  Dummy Coding Scheme:\n\n")
-
-    show_all <- is.character(show) && tolower(show) == "all"
-    n_show   <- if (show_all) n_cats else min(n_cats, 5)
-
-    # Build column names — truncated to n_show
-    all_col_names <- character(n_show)
-    for (i in seq_len(n_show)) {
-      if (i == ref_idx) {
-        all_col_names[i] <- paste0(labels_vec[i], "*")
-      } else {
-        all_col_names[i] <- labels_vec[i]
-      }
-    }
-
-    # Build row labels — add asterisk to reference category
-    row_labels <- character(n_show)
-    for (i in 1:n_show) {
-      if (i == ref_idx) {
-        row_labels[i] <- paste0(codes[i], ": ", labels_vec[i], "*")
-      } else {
-        row_labels[i] <- paste0(codes[i], ": ", labels_vec[i])
-      }
-    }
-
-    # Build matrix of 0s and 1s
-    scheme <- matrix(0L, nrow = n_show, ncol = n_show)
-    for (i in 1:n_show) {
-      scheme[i, i] <- 1L
-    }
-
-    scheme_df <- as.data.frame(scheme, stringsAsFactors = FALSE)
-    names(scheme_df) <- all_col_names
-    rownames(scheme_df) <- row_labels
-
-    .jst_print_table(scheme_df,
-                     col.names = all_col_names,
-                     row.names = TRUE,
-                     indent = 4)
-
-    cat("\n    * Reference category\n")
-
-    if (n_cats > 5 && !show_all) {
-      cat("    (Showing first 5 of ", n_cats,
-          " categories \u2014 use show = \"all\" for complete table)\n", sep = "")
-    }
-  }
-
-  cat("\n")
-  invisible(NULL)
-}
-
-
 # -- jdesc --------------------------------------------------------------------
 
 #' Descriptive statistics for one or more variables
@@ -1406,9 +419,6 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
 #' @param by An optional unquoted grouping variable name. When provided,
 #'   descriptives are computed separately for each group, with a separate
 #'   titled table per dependent variable.
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If \code{TRUE} (default), prints the variable type
 #'   and label (or "None") for each variable before the table.
 #'
@@ -1427,16 +437,8 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
 #' jdesc(, mpg, hp, wt)
 #' jdesc(, mpg, by = am)
 #'
-#' # With a vector directly
-#' jdesc(mtcars$mpg)
-#'
 #' @export
-jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
-
-  # Capture original expression before any evaluation (needed for vector input)
-  .data_expr <- if (!missing(data)) {
-    paste(deparse(substitute(data)), collapse = "")
-  } else NULL
+jdesc <- function(data, ..., by = NULL, labels = TRUE) {
 
   # Catch missing-comma error: jdesc(VarName) instead of jdesc(, VarName)
   if (!missing(data)) {
@@ -1455,15 +457,12 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
     .jst_default_used <- TRUE
     .jst_data_name    <- resolved$name
   } else {
-    .jst_data_name <- .data_expr
+    .jst_data_name <- deparse(substitute(data))
   }
 
   # Handle vector input
   if (is.atomic(data) && !is.data.frame(data)) {
-    var_name <- .data_expr
-    if (grepl("\\$", var_name)) {
-      var_name <- sub("^.*\\$", "", var_name)
-    }
+    var_name <- deparse(substitute(data))
     temp_df  <- data.frame(x = data)
     names(temp_df) <- var_name
     return(jdesc(temp_df, !!rlang::sym(var_name), labels = FALSE))
@@ -1506,16 +505,9 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
 
     group_levels <- levels(data[[by_name]])
 
-    # Apply data pipeline (jcomplete, jfilter, subset) — once before per-variable loop
-    subset_expr <- substitute(subset)
-    pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                    subset_expr = subset_expr, envir = parent.frame())
-    data     <- pipeline$data
-
     for (v in variable_names) {
       .cat_red(paste0("Descriptive Statistics: ", v, " by ", by_name, "\n"))
       if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
-      .jst_print_msgs(pipeline$msgs)
 
       if (labels) {
         cat(v, "\n", sep = "")
@@ -1524,13 +516,6 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
         cat(by_name, "\n", sep = "")
         cat("  Type: ", .format_var_type(original_by_class), "\n", sep = "")
         cat("  Variable label: ", original_by_label, "\n", sep = "")
-      }
-
-      # Warn if DV is haven-labelled (categorical)
-      if ("haven_labelled" %in% original_dv_info[[v]]$class) {
-        warning(paste0("'", v, "' is a categorical variable. Descriptive statistics ",
-                       "may not be meaningful. Use jfreq() for frequency tables."),
-                call. = FALSE)
       }
       cat("\n")
 
@@ -1571,7 +556,7 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
       })
       group_table <- do.call(rbind, group_rows)
 
-      .jst_print_table(group_table, row.names = FALSE)
+      .print_kable(group_table, row.names = FALSE)
       cat("\n")
     }
     cat("\n")
@@ -1589,35 +574,6 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
     variable_names
   )
 
-  # -- Print title and apply pipeline before computation -----------------------
-  .cat_red("Descriptive Statistics\n")
-  if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
-
-  # Apply data pipeline (jcomplete, jfilter, subset)
-  subset_expr <- substitute(subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
-  .jst_print_msgs(pipeline$msgs)
-
-  if (labels) {
-    for (v in variable_names) {
-      cat(v, "\n", sep = "")
-      cat("  Type: ", .format_var_type(original_var_info[[v]]$class), "\n", sep = "")
-      cat("  Variable label: ", original_var_info[[v]]$label, "\n", sep = "")
-    }
-  }
-
-  # Warn if haven-labelled (categorical) variables are being described
-  for (v in variable_names) {
-    if ("haven_labelled" %in% original_var_info[[v]]$class) {
-      warning(paste0("'", v, "' is a categorical variable. Descriptive statistics ",
-                     "may not be meaningful. Use jfreq() for frequency tables."),
-              call. = FALSE)
-    }
-  }
-
-  # -- Compute descriptives on filtered data ---------------------------------
   descriptives_list <- lapply(variables, function(var) {
     var_name <- rlang::quo_name(var)
     var_data <- rlang::eval_tidy(var, data)
@@ -1668,8 +624,20 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
   )
   descriptives <- rbind(descriptives, listwise_row)
 
+  # -- Print: title -> default note -> type/label block -> table ---------------
+  .cat_red("Descriptive Statistics\n")
+  if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
+
+  if (labels) {
+    for (v in variable_names) {
+      cat(v, "\n", sep = "")
+      cat("  Type: ", .format_var_type(original_var_info[[v]]$class), "\n", sep = "")
+      cat("  Variable label: ", original_var_info[[v]]$label, "\n", sep = "")
+    }
+  }
+
   cat("\n")
-  .jst_print_table(descriptives)
+  .print_kable(descriptives)
   cat("\n")
   invisible(descriptives)
 }
@@ -1697,9 +665,6 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
 #' @param data A data frame, or a vector.
 #' @param ... Unquoted variable name(s) within \code{data} (ignored if
 #'   \code{data} is a vector).
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If \code{TRUE} (default), prints the variable type
 #'   and label (or "None") beneath the title.
 #'
@@ -1716,16 +681,8 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
 #' jfreq(, cyl)
 #' jfreq(, cyl, gear)
 #'
-#' # With a vector directly
-#' jfreq(mtcars$gear)
-#'
 #' @export
-jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
-
-  # Capture original expression before any evaluation (needed for vector input)
-  .data_expr <- if (!missing(data)) {
-    paste(deparse(substitute(data)), collapse = "")
-  } else NULL
+jfreq <- function(data, ..., labels = TRUE) {
 
   # Catch missing-comma error: jfreq(VarName) instead of jfreq(, VarName)
   if (!missing(data)) {
@@ -1744,15 +701,12 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
     .jst_default_used <- TRUE
     .jst_data_name    <- resolved$name
   } else if (is.data.frame(data)) {
-    .jst_data_name <- .data_expr
+    .jst_data_name <- deparse(substitute(data))
   }
 
   # Handle vector input
   if (is.atomic(data) && !is.data.frame(data)) {
-    var_name <- .data_expr
-    if (grepl("\\$", var_name)) {
-      var_name <- sub("^.*\\$", "", var_name)
-    }
+    var_name <- deparse(substitute(data))
     temp_df  <- data.frame(x = data)
     names(temp_df) <- var_name
     return(jfreq(temp_df, !!rlang::sym(var_name), labels = FALSE))
@@ -1764,12 +718,6 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
   # Check all variables exist before any processing
   var_names_check <- vapply(variables, rlang::quo_name, character(1))
   .jst_check_vars(data, var_names_check, .jst_data_name)
-
-  # Apply data pipeline (jcomplete, jfilter, subset) — once before per-variable loop
-  subset_expr <- substitute(subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
 
   for (variable in variables) {
     variable_name <- rlang::quo_name(variable)
@@ -1832,9 +780,13 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
     results[[variable_name]] <- freq_table
 
     # -- Print: title -> type -> label -> single blank line -> table ----------
+    max_length      <- suppressWarnings(
+      max(nchar(as.character(freq_table$temp_var)), na.rm = TRUE)
+    )
+    first_col_width <- max(max_length, nchar("Category"), na.rm = TRUE)
+
     .cat_red(paste0("Frequencies for ", variable_name, "\n"))
     if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
-    .jst_print_msgs(pipeline$msgs)
 
     if (labels) {
       cat("Type of variable: ", .format_var_type(var_class), "\n", sep = "")
@@ -1842,22 +794,33 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
     }
     cat("\n")
 
-    # Build display data frame for the table printer
-    display_df <- data.frame(
-      Value   = ifelse(is.na(freq_table$temp_var), "NA",
-                       as.character(freq_table$temp_var)),
-      Freq    = freq_table$Freq,
-      TotalPct = sprintf("%.2f", freq_table$`Total %`),
-      ValidPct = ifelse(is.na(freq_table$`Valid %`), "",
-                        sprintf("%.2f", freq_table$`Valid %`)),
-      CumPct   = ifelse(is.na(freq_table$`Cum. %`), "",
-                        sprintf("%.2f", freq_table$`Cum. %`)),
-      stringsAsFactors = FALSE
-    )
+    cat(sprintf("%-*s", first_col_width, ""),
+        "Freq", "Total %", "Valid %", "Cum. %", sep = "\t")
+    cat("\n",
+        strrep("-", first_col_width), "\t",
+        strrep("-", 4), "\t",
+        strrep("-", 7), "\t",
+        strrep("-", 7), "\t",
+        strrep("-", 6),
+        sep = "")
+    cat("\n")
 
-    .jst_print_table(display_df,
-                     col.names = c("", "Freq", "Total %", "Valid %", "Cum. %"),
-                     row.names = FALSE)
+    for (i in seq_len(nrow(freq_table))) {
+      cat(
+        sprintf("%-*s", first_col_width,
+                ifelse(is.na(freq_table$temp_var[i]),
+                       "NA",
+                       as.character(freq_table$temp_var[i]))),
+        "\t", freq_table$Freq[i],
+        "\t", sprintf("%.2f", freq_table$`Total %`[i]),
+        "\t", ifelse(is.na(freq_table$`Valid %`[i]),  "",
+                     sprintf("%.2f", freq_table$`Valid %`[i])),
+        "\t", ifelse(is.na(freq_table$`Cum. %`[i]), "",
+                     sprintf("%.2f", freq_table$`Cum. %`[i])),
+        sep = ""
+      )
+      cat("\n")
+    }
     cat("\n")
   }
 
@@ -1893,9 +856,6 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
 #'   of variance. Ignored when paired = TRUE.
 #' @param ci Logical. If TRUE, adds 95\% confidence interval for the
 #'   mean difference.
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #' @param full Logical. If TRUE, turns on effect.size, levene, and ci
@@ -1918,7 +878,7 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
 #' @importFrom stats t.test sd qt
 jt <- function(formula, data, paired = FALSE, welch = FALSE,
                effect.size = FALSE, levene = FALSE, ci = FALSE,
-               subset = NULL, labels = TRUE, full = FALSE) {
+               labels = TRUE, full = FALSE) {
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -1948,26 +908,11 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   }
   if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
 
-  # Apply data pipeline (jcomplete, jfilter, subset)
-  subset_expr <- substitute(subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
-  .jst_print_msgs(pipeline$msgs)
-
   terms      <- all.vars(formula)
   dv_name    <- terms[1]
   group_name <- terms[2]
 
   .jst_check_vars(data, terms, .jst_data_name)
-
-  # Report cases excluded due to missing values
-  n_before_na <- nrow(data)
-  complete_on <- data[stats::complete.cases(data[, terms, drop = FALSE]), , drop = FALSE]
-  n_excluded_na <- n_before_na - nrow(complete_on)
-  if (n_excluded_na > 0) {
-    cat("(", n_excluded_na, " cases excluded due to missing values)\n", sep = "")
-  }
 
   group_var   <- data[[group_name]]
   is_labelled <- haven::is.labelled(group_var)
@@ -1981,31 +926,11 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
     data[[group_name]] <- factor(group_var)
   }
 
-  # Drop empty factor levels (pipeline filtering may leave empty levels)
-  data[[group_name]] <- droplevels(data[[group_name]])
-
   n_levels <- nlevels(data[[group_name]])
   if (n_levels != 2) {
-    # Build context-aware error message
-    active_steps <- character(0)
-    if (.jst_default_used) {
-      cs <- .jst_get_complete(.jst_data_name)
-      if (!is.null(cs) && cs$active) active_steps <- c(active_steps, "jcomplete")
-      fs <- .jst_get_filter(.jst_data_name)
-      if (!is.null(fs) && fs$active) active_steps <- c(active_steps,
-                                                       paste0("jfilter (", fs$expr_str, ")"))
-    }
-    if (length(active_steps) > 0) {
-      stop(paste0("'", group_name, "' has ", n_levels,
-                  " category(ies) after applying ", paste(active_steps, collapse = " and "),
-                  ". A t-test requires exactly 2. ",
-                  "Check whether your filter or complete-case settings ",
-                  "are excluding one of the groups."), call. = FALSE)
-    } else {
-      stop(paste0("'", group_name, "' has ", n_levels,
-                  " categories. A t-test requires exactly 2. ",
-                  "Use jaov() for more than 2 categories."), call. = FALSE)
-    }
+    stop(paste0("'", group_name, "' has ", n_levels,
+                " categories. A t-test requires exactly 2. ",
+                "Use jaov() for more than 2 categories."), call. = FALSE)
   }
 
   if (haven::is.labelled(data[[dv_name]])) {
@@ -2047,10 +972,10 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
       row.names = NULL
     )
 
-    .jst_print_table(levene_table,
-                     caption = "Levene's Test for Homogeneity of Variance",
-                     col.names = c("F", "df1", "df2", "p"),
-                     row.names = FALSE)
+    .print_kable(levene_table,
+                 caption = "Levene's Test for Homogeneity of Variance",
+                 col.names = c("F", "df1", "df2", "p"),
+                 row.names = FALSE)
     cat("\n")
   } else if (levene && paired) {
     cat("Note: Levene's test is not applicable for paired samples.\n\n")
@@ -2071,9 +996,9 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
     stringsAsFactors = FALSE
   )
 
-  .jst_print_table(desc_table,
-                   caption = paste("Group Descriptives:", dv_name, "by", group_name),
-                   row.names = FALSE)
+  .print_kable(desc_table,
+               caption = paste("Group Descriptives:", dv_name, "by", group_name),
+               row.names = FALSE)
   cat("\n")
 
   # Run t-test
@@ -2109,16 +1034,16 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   }
 
   if (ci) {
-    .jst_print_table(test_table,
-                     caption = test_label,
-                     col.names = c("t", "df", "p", "Mean Difference",
-                                   "95% CI Lower", "95% CI Upper"),
-                     row.names = FALSE)
+    .print_kable(test_table,
+                 caption = test_label,
+                 col.names = c("t", "df", "p", "Mean Difference",
+                               "95% CI Lower", "95% CI Upper"),
+                 row.names = FALSE)
   } else {
-    .jst_print_table(test_table,
-                     caption = test_label,
-                     col.names = c("t", "df", "p", "Mean Difference"),
-                     row.names = FALSE)
+    .print_kable(test_table,
+                 caption = test_label,
+                 col.names = c("t", "df", "p", "Mean Difference"),
+                 row.names = FALSE)
   }
 
   # Effect size (Cohen's d)
@@ -2173,9 +1098,6 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
 #'   of variance.
 #' @param ci Logical. If TRUE, adds 95\% confidence intervals to the
 #'   group descriptives table.
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #' @param full Logical. If TRUE, turns on posthoc, effect.size, levene,
@@ -2198,7 +1120,7 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
 #' @importFrom stats aov oneway.test TukeyHSD qt
 jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
                  effect.size = FALSE, levene = FALSE, ci = FALSE,
-                 subset = NULL, labels = TRUE, full = FALSE) {
+                 labels = TRUE, full = FALSE) {
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -2227,26 +1149,11 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
   }
   if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
 
-  # Apply data pipeline (jcomplete, jfilter, subset)
-  subset_expr <- substitute(subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
-  .jst_print_msgs(pipeline$msgs)
-
   terms      <- all.vars(formula)
   dv_name    <- terms[1]
   group_name <- terms[2]
 
   .jst_check_vars(data, terms, .jst_data_name)
-
-  # Report cases excluded due to missing values
-  n_before_na <- nrow(data)
-  complete_on <- data[stats::complete.cases(data[, terms, drop = FALSE]), , drop = FALSE]
-  n_excluded_na <- n_before_na - nrow(complete_on)
-  if (n_excluded_na > 0) {
-    cat("(", n_excluded_na, " cases excluded due to missing values)\n", sep = "")
-  }
 
   group_var   <- data[[group_name]]
   is_labelled <- haven::is.labelled(group_var)
@@ -2258,33 +1165,6 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
     data[[group_name]] <- haven::as_factor(group_var)
   } else if (!is.factor(group_var)) {
     data[[group_name]] <- factor(group_var)
-  }
-
-  # Drop empty factor levels (pipeline filtering may leave empty levels)
-  data[[group_name]] <- droplevels(data[[group_name]])
-
-  # Check minimum group levels
-  n_levels <- nlevels(data[[group_name]])
-  if (n_levels < 2) {
-    active_steps <- character(0)
-    if (.jst_default_used) {
-      cs <- .jst_get_complete(.jst_data_name)
-      if (!is.null(cs) && cs$active) active_steps <- c(active_steps, "jcomplete")
-      fs <- .jst_get_filter(.jst_data_name)
-      if (!is.null(fs) && fs$active) active_steps <- c(active_steps,
-                                                       paste0("jfilter (", fs$expr_str, ")"))
-    }
-    if (length(active_steps) > 0) {
-      stop(paste0("'", group_name, "' has ", n_levels,
-                  " category(ies) after applying ", paste(active_steps, collapse = " and "),
-                  ". An ANOVA requires at least 2. ",
-                  "Check whether your filter or complete-case settings ",
-                  "are excluding one or more groups."), call. = FALSE)
-    } else {
-      stop(paste0("'", group_name, "' has ", n_levels,
-                  " category(ies). An ANOVA requires at least 2 groups."),
-           call. = FALSE)
-    }
   }
 
   if (haven::is.labelled(data[[dv_name]])) {
@@ -2316,10 +1196,10 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
       row.names = NULL
     )
 
-    .jst_print_table(levene_table,
-                     caption = "Levene's Test for Homogeneity of Variance",
-                     col.names = c("F", "df1", "df2", "p"),
-                     row.names = FALSE)
+    .print_kable(levene_table,
+                 caption = "Levene's Test for Homogeneity of Variance",
+                 col.names = c("F", "df1", "df2", "p"),
+                 row.names = FALSE)
     cat("\n")
   }
 
@@ -2359,15 +1239,15 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
   desc_table <- do.call(rbind, desc_rows)
 
   if (ci) {
-    .jst_print_table(desc_table,
-                     caption = paste("Group Descriptives:", dv_name, "by", group_name),
-                     col.names = c("Group", "N", "Mean", "SD",
-                                   "95% CI Lower", "95% CI Upper"),
-                     row.names = FALSE)
+    .print_kable(desc_table,
+                 caption = paste("Group Descriptives:", dv_name, "by", group_name),
+                 col.names = c("Group", "N", "Mean", "SD",
+                               "95% CI Lower", "95% CI Upper"),
+                 row.names = FALSE)
   } else {
-    .jst_print_table(desc_table,
-                     caption = paste("Group Descriptives:", dv_name, "by", group_name),
-                     row.names = FALSE)
+    .print_kable(desc_table,
+                 caption = paste("Group Descriptives:", dv_name, "by", group_name),
+                 row.names = FALSE)
   }
   cat("\n")
 
@@ -2386,10 +1266,10 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
       row.names = NULL
     )
 
-    .jst_print_table(welch_table,
-                     caption = paste("Welch's ANOVA:", dv_name, "by", group_name),
-                     col.names = c("F", "df1", "df2", "p"),
-                     row.names = FALSE)
+    .print_kable(welch_table,
+                 caption = paste("Welch's ANOVA:", dv_name, "by", group_name),
+                 col.names = c("F", "df1", "df2", "p"),
+                 row.names = FALSE)
 
     cat("\nNote: Sum of Squares and Mean Squares are not available for Welch's ANOVA.\n",
         "To obtain these, run jaov() without welch = TRUE.\n", sep = "")
@@ -2427,11 +1307,11 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
       stringsAsFactors = FALSE
     )
 
-    .jst_print_table(anova_table,
-                     caption = paste("ANOVA:", dv_name, "by", group_name),
-                     col.names = c("Source", "df", "Sum of Squares",
-                                   "Mean Square", "F", "p"),
-                     row.names = FALSE)
+    .print_kable(anova_table,
+                 caption = paste("ANOVA:", dv_name, "by", group_name),
+                 col.names = c("Source", "df", "Sum of Squares",
+                               "Mean Square", "F", "p"),
+                 row.names = FALSE)
 
     if (effect.size) {
       eta_sq <- round(result$`Sum Sq`[1] / sum(result$`Sum Sq`), 3)
@@ -2457,12 +1337,12 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
       )
 
       cat("\n")
-      .jst_print_table(tukey_table,
-                       caption = "Tukey HSD Post-Hoc Comparisons",
-                       col.names = c("Comparison", "Mean Difference",
-                                     "95% CI Lower", "95% CI Upper",
-                                     "p (adjusted)"),
-                       row.names = FALSE)
+      .print_kable(tukey_table,
+                   caption = "Tukey HSD Post-Hoc Comparisons",
+                   col.names = c("Comparison", "Mean Difference",
+                                 "95% CI Lower", "95% CI Upper",
+                                 "p (adjusted)"),
+                   row.names = FALSE)
     }
   }
 
@@ -2488,9 +1368,6 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
 #' @param ... Unquoted variable names within \code{data}.
 #' @param method Character. Correlation method: "pearson" (default),
 #'   "spearman", or "kendall".
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #'
@@ -2508,7 +1385,7 @@ jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
 #'
 #' @importFrom stats cor.test complete.cases
 #' @export
-jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = TRUE) {
+jcorr <- function(data, ..., method = "pearson", labels = TRUE) {
 
   # Catch missing-comma error: jcorr(VarName, ...) instead of jcorr(, VarName, ...)
   if (!missing(data)) {
@@ -2552,13 +1429,6 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = TRUE) {
   # Red title
   .cat_red(paste0(method_label, " Bivariate Correlations\n"))
   if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
-
-  # Apply data pipeline (jcomplete, jfilter, subset)
-  subset_expr <- substitute(subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
-  .jst_print_msgs(pipeline$msgs)
 
   cor_data <- data[, variable_names, drop = FALSE]
 
@@ -2639,8 +1509,8 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = TRUE) {
     .print_var_labels(data, variable_names)
   }
 
-  .jst_print_table(display_df,
-                   caption = paste0("Bivariate Correlations (", method_label, ")"))
+  .print_kable(display_df,
+               caption = paste0("Bivariate Correlations (", method_label, ")"))
 
   if (has_ties) {
     cat("\nNote: Spearman p-values are approximate due to tied values in the data.\n")
@@ -2672,9 +1542,6 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = TRUE) {
 #'
 #' @param formula A model formula, e.g. \code{y ~ x1 + x2}.
 #' @param data A data frame containing variables referenced in \code{formula}.
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #'
@@ -2690,7 +1557,7 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = TRUE) {
 #' jlm(mpg ~ hp + wt)
 #'
 #' @export
-jlm <- function(formula, data, subset = NULL, labels = TRUE) {
+jlm <- function(formula, data, labels = TRUE) {
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -2708,30 +1575,13 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE) {
   .cat_red("Linear Regression\n")
   if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
 
-  # Apply data pipeline (jcomplete, jfilter, subset)
-  subset_expr <- substitute(subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
-  .jst_print_msgs(pipeline$msgs)
-
   model_vars <- all.vars(formula)
 
   .jst_check_vars(data, model_vars, .jst_data_name)
 
-  # -- Expand registered dummy variables ------------------------------------
-  expanded         <- .jst_expand_dummies(data, formula, .jst_data_name)
-  data             <- expanded$data
-  formula          <- expanded$formula
-  ref_cats         <- expanded$ref_cats
-  dummy_coef_names <- expanded$dummy_coef_names
-  model_vars       <- all.vars(formula)
-
-  # -- Haven conversion for non-dummy variables ------------------------------
   for (v in model_vars) {
-    if (v %in% dummy_coef_names) next  # Skip dummy columns we just created
     if (haven::is.labelled(data[[v]])) {
-      if (v == all.vars(formula)[1]) {
+      if (v == model_vars[1]) {
         data[[v]] <- as.numeric(data[[v]])
       } else {
         data[[v]] <- haven::as_factor(data[[v]])
@@ -2740,19 +1590,10 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE) {
   }
 
   if (labels) {
-    .print_var_labels(data, all.vars(formula))
-  }
-
-  # Print reference categories if any
-  if (length(ref_cats) > 0) {
-    cat("  Reference categories: ", paste(ref_cats, collapse = ", "), "\n\n", sep = "")
+    .print_var_labels(data, model_vars)
   }
 
   mf            <- stats::model.frame(formula, data = data, na.action = stats::na.omit)
-  n_excluded_na <- nrow(data) - nrow(mf)
-  if (n_excluded_na > 0) {
-    cat("(", n_excluded_na, " cases excluded due to missing values)\n", sep = "")
-  }
   model         <- stats::lm(formula, data = mf)
   model_summary <- summary(model)
 
@@ -2777,13 +1618,6 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE) {
     for (term in factor_terms) {
       dummy_rows        <- grep(paste0("^", term), rownames(coefs), value = TRUE)
       std_b[dummy_rows] <- NA_real_
-    }
-  }
-
-  # Blank Std B for registered dummy variables
-  if (length(dummy_coef_names) > 0) {
-    for (dname in dummy_coef_names) {
-      if (dname %in% names(std_b)) std_b[dname] <- NA_real_
     }
   }
 
@@ -2824,9 +1658,7 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE) {
   }
 
   cat("\nCoefficients:\n")
-  .jst_print_table(out_coefs,
-                   col.names = c("B", "SE", "t", "Std B", "p"),
-                   row.names = TRUE)
+  print(out_coefs, quote = FALSE)
 
   cat("\nR-squared: ", sprintf("%.3f", r_squared), "\n", sep = "")
   cat("Residual Standard Error: ", sprintf("%.3f", residual_se), "\n", sep = "")
@@ -2855,57 +1687,46 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE) {
 }
 
 
-# -- jcrosstab -----------------------------------------------------------------
+# -- jchisq -------------------------------------------------------------------
 
-#' Cross-tabulation with optional chi-square test of independence
+#' Chi-square test of independence with cross-tabulation
 #'
 #' Produces an SPSS-style cross-tabulation of two categorical variables
 #' with observed frequencies, expected frequencies, row percentages,
-#' and column percentages. Optionally includes a chi-square test of
-#' independence. Handles haven-labelled, numeric, factor, and character
-#' variables. For haven-labelled variables, numeric codes are displayed
-#' alongside labels.
+#' column percentages, and a chi-square test of independence. Handles
+#' haven-labelled, numeric, factor, and character variables.
+#' For haven-labelled variables, numeric codes are displayed alongside
+#' labels.
 #'
-#' A red "Cross-Tabulation" title is printed first, followed by
-#' variable labels (if present), then the table and optional test results.
+#' A red "Chi-Square Analysis" title is printed first, followed by
+#' variable labels (if present), then the cross-tabulation and test results.
 #'
 #' @param formula A formula of the form \code{Row ~ Column}.
 #' @param data A data frame containing variables referenced in \code{formula}.
-#' @param chisq Logical. If TRUE, prints the chi-square test of independence
-#'   below the cross-tabulation. Default is FALSE.
 #' @param expected Logical. If TRUE, prints expected frequencies alongside
 #'   observed. Default is FALSE.
 #' @param row.pct Logical. If TRUE (default), shows row percentages.
 #' @param col.pct Logical. If TRUE, shows column percentages. Default is FALSE.
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #'
-#' @return Invisibly returns a list containing the cross-tabulation and,
-#'   if requested, the chi-square statistic, degrees of freedom, and p value.
+#' @return Invisibly returns a list containing the cross-tabulation,
+#'   chi-square statistic, degrees of freedom, and p value.
 #'
 #' @examples
-#' # Cross-tabulation only
-#' jcrosstab(cyl ~ am, data = mtcars)
-#'
-#' # With chi-square test
-#' jcrosstab(cyl ~ am, data = mtcars, chisq = TRUE)
-#'
-#' # With expected frequencies and column percentages
-#' jcrosstab(cyl ~ am, data = mtcars, expected = TRUE, col.pct = TRUE)
+#' # With explicit data frame
+#' jchisq(cyl ~ am, data = mtcars)
+#' jchisq(cyl ~ am, data = mtcars, expected = TRUE, col.pct = TRUE)
 #'
 #' # Using juse() default
 #' juse(mtcars)
-#' jcrosstab(cyl ~ am)
-#' jcrosstab(cyl ~ am, chisq = TRUE)
+#' jchisq(cyl ~ am)
+#' jchisq(cyl ~ am, expected = TRUE)
 #'
 #' @importFrom stats chisq.test
 #' @export
-jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
-                      row.pct = TRUE, col.pct = FALSE, subset = NULL,
-                      labels = TRUE) {
+jchisq <- function(formula, data, expected = FALSE, row.pct = TRUE,
+                   col.pct = FALSE, labels = TRUE) {
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -2926,23 +1747,8 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
   .jst_check_vars(data, terms, .jst_data_name)
 
   # Red title
-  .cat_red("Cross-Tabulation\n")
+  .cat_red("Chi-Square Analysis\n")
   if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
-
-  # Apply data pipeline (jcomplete, jfilter, subset)
-  subset_expr <- substitute(subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
-  .jst_print_msgs(pipeline$msgs)
-
-  # Report cases excluded due to missing values
-  n_before_na <- nrow(data)
-  complete_on <- data[stats::complete.cases(data[, c(row_name, col_name), drop = FALSE]), , drop = FALSE]
-  n_excluded_na <- n_before_na - nrow(complete_on)
-  if (n_excluded_na > 0) {
-    cat("(", n_excluded_na, " cases excluded due to missing values)\n", sep = "")
-  }
 
   row_var <- data[[row_name]]
   col_var <- data[[col_name]]
@@ -2968,35 +1774,8 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
     .print_var_labels(data, c(row_name, col_name))
   }
 
-  # Drop empty factor levels (pipeline filtering may leave empty levels)
-  row_var <- droplevels(row_var)
-  col_var <- droplevels(col_var)
-
   row_levels <- levels(row_var)
   col_levels <- levels(col_var)
-
-  # Check minimum levels
-  for (check_info in list(list(name = row_name, lvls = row_levels),
-                          list(name = col_name, lvls = col_levels))) {
-    if (length(check_info$lvls) < 2) {
-      active_steps <- character(0)
-      if (.jst_default_used) {
-        cs <- .jst_get_complete(.jst_data_name)
-        if (!is.null(cs) && cs$active) active_steps <- c(active_steps, "jcomplete")
-        fs <- .jst_get_filter(.jst_data_name)
-        if (!is.null(fs) && fs$active) active_steps <- c(active_steps,
-                                                         paste0("jfilter (", fs$expr_str, ")"))
-      }
-      context <- if (length(active_steps) > 0) {
-        paste0(" after applying ", paste(active_steps, collapse = " and "))
-      } else ""
-      stop(paste0("'", check_info$name, "' has ", length(check_info$lvls),
-                  " category(ies)", context,
-                  ". A chi-square test requires at least 2 categories ",
-                  "for each variable."), call. = FALSE)
-    }
-  }
-
   row_labels <- if (row_labelled) paste0(row_codes, ": ", row_levels) else row_levels
   col_labels <- if (col_labelled) paste0(col_codes, ": ", col_levels) else col_levels
 
@@ -3059,48 +1838,42 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
                                         stringsAsFactors = FALSE)
   colnames(display_df) <- header
 
-  .jst_print_table(display_df,
-                   caption = paste("Cross-tabulation:", row_name, "by", col_name),
-                   row.names = FALSE)
+  .print_kable(display_df,
+               caption = paste("Cross-tabulation:", row_name, "by", col_name),
+               row.names = FALSE)
   cat("\n")
 
-  # Chi-square test (only if requested)
-  if (chisq) {
-    chi_table <- data.frame(
-      Chi_Square = round(chi_result$statistic, 3),
-      df         = chi_result$parameter,
-      p          = p_fmt,
-      N          = grand_total,
-      stringsAsFactors = FALSE,
-      row.names  = NULL
-    )
-
-    .jst_print_table(chi_table,
-                     caption = "Chi-Square Test of Independence",
-                     col.names = c("Chi-Square", "df", "p", "N"),
-                     row.names = FALSE)
-
-    min_expected <- min(exp_table)
-    n_below_5    <- sum(exp_table < 5)
-    if (n_below_5 > 0) {
-      cat(paste0("\nNote: ", n_below_5, " cell(s) have expected frequencies less than 5 ",
-                 "(minimum expected = ", round(min_expected, 1), "). ",
-                 "Chi-square results may not be reliable.\n"))
-    }
-  }
-
-  cat("\n")
-  ret <- list(
-    observed = obs_table,
-    expected = exp_table,
-    n        = grand_total
+  chi_table <- data.frame(
+    Chi_Square = round(chi_result$statistic, 3),
+    df         = chi_result$parameter,
+    p          = p_fmt,
+    N          = grand_total,
+    stringsAsFactors = FALSE,
+    row.names  = NULL
   )
-  if (chisq) {
-    ret$chi_square <- chi_result$statistic
-    ret$df         <- chi_result$parameter
-    ret$p          <- chi_result$p.value
+
+  .print_kable(chi_table,
+               caption = "Chi-Square Test of Independence",
+               col.names = c("Chi-Square", "df", "p", "N"),
+               row.names = FALSE)
+
+  min_expected <- min(exp_table)
+  n_below_5    <- sum(exp_table < 5)
+  if (n_below_5 > 0) {
+    cat(paste0("\nNote: ", n_below_5, " cell(s) have expected frequencies less than 5 ",
+               "(minimum expected = ", round(min_expected, 1), "). ",
+               "Chi-square results may not be reliable.\n"))
   }
-  invisible(ret)
+
+  cat("\n")
+  invisible(list(
+    observed   = obs_table,
+    expected   = exp_table,
+    chi_square = chi_result$statistic,
+    df         = chi_result$parameter,
+    p          = chi_result$p.value,
+    n          = grand_total
+  ))
 }
 
 
@@ -3113,22 +1886,12 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
 #' potential outliers for numeric variables. Handles haven-labelled
 #' variables by reporting their labelled status.
 #'
-#' When variable names are supplied, only those variables are screened.
-#' When omitted, all variables in the data frame are screened. If a
-#' \code{subset} expression references variables not already in the
-#' screening list, they are included automatically.
-#'
 #' A red "Data Screening" title is printed first, followed by a dataset
 #' summary, variable labels (if present), and the screening table.
 #'
 #' @param data A data frame.
-#' @param ... Optional unquoted variable names to screen. If omitted,
-#'   all variables in the data frame are screened.
 #' @param outlier.sd Numeric. Number of standard deviations from the mean
 #'   to flag as potential outliers. Default is 3.
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #'
@@ -3142,11 +1905,9 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
 #' # Using juse() default
 #' juse(mtcars)
 #' jscreen()
-#' jscreen(, mpg, hp, wt)
-#' jscreen(, mpg, hp, wt, subset = am == 1)
 #'
 #' @export
-jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = TRUE) {
+jscreen <- function(data, outlier.sd = 3, labels = TRUE) {
 
   # Catch missing-comma error
   if (!missing(data)) {
@@ -3168,42 +1929,13 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = TRUE) {
     .jst_data_name <- deparse(substitute(data))
   }
 
-  # Capture subset expression before evaluation
-  subset_expr <- substitute(subset)
-
-  # Determine which variables to screen
-  variables <- rlang::enquos(...)
-  if (length(variables) > 0) {
-    var_names <- vapply(variables, rlang::quo_name, character(1))
-    .jst_check_vars(data, var_names, .jst_data_name)
-
-    # Auto-include variables from subset expression
-    if (!is.null(subset_expr)) {
-      subset_vars <- all.vars(subset_expr)
-      extra_vars  <- setdiff(subset_vars, var_names)
-      extra_vars  <- extra_vars[extra_vars %in% names(data)]
-      if (length(extra_vars) > 0) {
-        var_names <- c(var_names, extra_vars)
-      }
-    }
-
-    data <- data[, var_names, drop = FALSE]
-  }
-
-  # Red title
-  .cat_red("Data Screening\n")
-  if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
-
-  # Apply data pipeline (jcomplete, jfilter, subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
-  .jst_print_msgs(pipeline$msgs)
-
   n_cases   <- nrow(data)
   n_vars    <- ncol(data)
   var_names <- names(data)
 
+  # Red title
+  .cat_red("Data Screening\n")
+  if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
   cat("  Cases:", n_cases, "\n")
   cat("  Variables:", n_vars, "\n")
   cat("  Complete cases (no missing on any variable):",
@@ -3260,12 +1992,12 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = TRUE) {
     cat("\n")
   }
 
-  .jst_print_table(screen_table,
-                   caption = paste0("Data Screening (outliers defined as > ",
-                                    outlier.sd, " SD from mean)"),
-                   col.names = c("Variable", "Type", "Unique Values",
-                                 "Missing", "% Missing", "Outliers"),
-                   row.names = FALSE)
+  .print_kable(screen_table,
+               caption = paste0("Data Screening (outliers defined as > ",
+                                outlier.sd, " SD from mean)"),
+               col.names = c("Variable", "Type", "Unique Values",
+                             "Missing", "% Missing", "Outliers"),
+               row.names = FALSE)
 
   missing_vars <- screen_table[screen_table$Missing > 0, ]
   outlier_vars <- screen_table[!is.na(screen_table$Outliers) &
@@ -3315,9 +2047,6 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = TRUE) {
 #'
 #' @param data A data frame.
 #' @param ... Unquoted variable names (scale items) within \code{data}.
-#' @param subset An optional unquoted logical expression (e.g.
-#'   \code{Gender == 1}) to filter cases for this call only. Applied after
-#'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #'
@@ -3333,7 +2062,7 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = TRUE) {
 #' jalpha(, rating, complaints, privileges, learning, raises)
 #'
 #' @export
-jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
+jalpha <- function(data, ..., labels = TRUE) {
 
   # Catch missing-comma error: jalpha(VarName, ...) instead of jalpha(, VarName, ...)
   if (!missing(data)) {
@@ -3360,20 +2089,9 @@ jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
 
   .jst_check_vars(data, variable_names, .jst_data_name)
 
-  if (length(variable_names) < 2) {
-    stop("jalpha() requires at least 2 items. Only 1 was provided.", call. = FALSE)
-  }
-
   # Red title
   .cat_red("Reliability Analysis\n")
   if (.jst_default_used) cat("(Using default data frame:", .jst_data_name, ")\n")
-
-  # Apply data pipeline (jcomplete, jfilter, subset)
-  subset_expr <- substitute(subset)
-  pipeline <- .jst_apply_pipeline(data, .jst_data_name, .jst_default_used,
-                                  subset_expr = subset_expr, envir = parent.frame())
-  data     <- pipeline$data
-  .jst_print_msgs(pipeline$msgs)
 
   items <- data[, variable_names, drop = FALSE]
 
@@ -3400,10 +2118,10 @@ jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
   )
 
   cat("\n")
-  .jst_print_table(case_table,
-                   caption = "Case Processing Summary",
-                   col.names = c("", "N", "%"),
-                   row.names = FALSE)
+  .print_kable(case_table,
+               caption = "Case Processing Summary",
+               col.names = c("", "N", "%"),
+               row.names = FALSE)
   cat("\n")
 
   # Overall Cronbach's Alpha
@@ -3418,10 +2136,10 @@ jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
     stringsAsFactors = FALSE
   )
 
-  .jst_print_table(alpha_table,
-                   caption = "Reliability Statistics",
-                   col.names = c("Cronbach's Alpha", "N of Items"),
-                   row.names = FALSE)
+  .print_kable(alpha_table,
+               caption = "Reliability Statistics",
+               col.names = c("Cronbach's Alpha", "N of Items"),
+               row.names = FALSE)
   cat("\n")
 
   # Variable Labels
@@ -3439,9 +2157,9 @@ jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
     row.names = NULL
   )
 
-  .jst_print_table(item_stats,
-                   caption = "Item Statistics",
-                   row.names = FALSE)
+  .print_kable(item_stats,
+               caption = "Item Statistics",
+               row.names = FALSE)
   cat("\n")
 
   # Item-Total Statistics
@@ -3501,11 +2219,11 @@ jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
     cat("\n")
   }
 
-  .jst_print_table(item_total_table,
-                   caption = "Item-Total Statistics",
-                   col.names = c("Item", "Corrected Item-Total r",
-                                 "Alpha if Item Deleted"),
-                   row.names = FALSE)
+  .print_kable(item_total_table,
+               caption = "Item-Total Statistics",
+               col.names = c("Item", "Corrected Item-Total r",
+                             "Alpha if Item Deleted"),
+               row.names = FALSE)
 
   cat("\n")
   invisible(list(
@@ -3984,627 +2702,7 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
 
   return(invisible(result))
 }
-# -- jload --------------------------------------------------------------------
 
-#' Load a data file into R
-#'
-#' @description
-#' \code{jload()} reads a data file and assigns it as a data frame in your
-#' environment. Supports SPSS (\code{.sav}), Stata (\code{.dta}), SAS
-#' (\code{.sas7bdat}, \code{.xpt}), CSV (\code{.csv}), and R's native
-#' \code{.rds} format. File format is detected from the extension.
-#'
-#' By default, \code{jload()} looks for the file in a \code{Data/} (or
-#' \code{data/}) subfolder of the working directory first, then the
-#' working directory itself. If a full file path is provided, it is used
-#' directly.
-#'
-#' The data frame is automatically named after the file (without the
-#' extension). Use the \code{name} argument to specify a different name.
-#'
-#' @param file Character string. The filename (e.g. \code{"mydata.sav"}) or
-#'   a full file path (e.g. \code{"C:/Projects/mydata.sav"}). Use forward
-#'   slashes in file paths. If the extension is omitted, \code{jload()}
-#'   searches for common data file types automatically.
-#' @param name Character string (optional). The name to assign the data frame
-#'   in your environment. If omitted, the name is derived from the filename.
-#' @param use Logical. If \code{TRUE}, automatically calls \code{juse()} on
-#'   the loaded data frame to set it as the default for JeffsStatTools
-#'   functions. Default is \code{FALSE}.
-#' @param overwrite Logical. If \code{TRUE}, overwrites an existing object
-#'   with the same name without prompting. If \code{FALSE} (default),
-#'   prompts for confirmation in interactive sessions. In non-interactive
-#'   sessions, overwrites with a warning message.
-#' @param check.missing Logical. If \code{TRUE} (default), scans numeric
-#'   variables for values that look like coded missing values (e.g. -99, 999)
-#'   and reports them. Set to \code{FALSE} to skip this check.
-#'
-#' @return Invisibly returns the loaded data frame. The primary effect is
-#'   assigning the data frame in the calling environment.
-#'
-#' @details
-#' \strong{File paths:}
-#' Use forward slashes (\code{/}) in file paths. If you copy a path from
-#' Windows File Explorer, replace the backslashes with forward slashes.
-#' R does not accept single backslashes in file paths.
-#'
-#' \strong{File search order:}
-#' \enumerate{
-#'   \item If the path contains a directory separator (\code{/}), the path
-#'     is used directly.
-#'   \item If the path is a bare filename, \code{jload()} checks:
-#'     (a) \code{Data/} subfolder, (b) \code{data/} subfolder,
-#'     (c) the working directory.
-#' }
-#'
-#' \strong{Auto-naming:}
-#' The data frame name is derived from the filename by stripping the
-#' extension. If the resulting name starts with a digit (which R does not
-#' allow as a variable name), you must supply the \code{name} argument.
-#'
-#' \strong{Coded missing values:}
-#' When \code{check.missing = TRUE}, the function scans numeric variables
-#' for values that appear to be coded missing values. Only whole-number
-#' values are considered (coded missing values are always integers like
-#' -99, 999, etc.). Two detection methods are used:
-#' \itemize{
-#'   \item For SPSS files, user-defined missing values stored in the file
-#'     metadata are reported with high confidence.
-#'   \item A heuristic scan detects negative values among otherwise positive
-#'     data and extreme outlier values (5x the range of other values).
-#' }
-#' Detected values are reported but not changed. Use \code{\link{jrecode}}
-#' to convert them to \code{NA} if needed.
-#'
-#' @examples
-#' \dontrun{
-#' jload("mydata.sav")
-#' jload("mydata.sav", use = TRUE)
-#' jload("mydata.sav", name = "MySurvey")
-#' jload("C:/Projects/Data/mydata.dta")
-#' }
-#'
-#' @export
-jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
-                  check.missing = TRUE) {
-
-  # --- Validate file argument ------------------------------------------------
-  if (missing(file) || !is.character(file) || length(file) != 1 ||
-      nchar(trimws(file)) == 0) {
-    stop("Please provide a filename, e.g. jload(\"mydata.sav\")", call. = FALSE)
-  }
-
-  # --- Determine if file has a directory component ---------------------------
-  has_dir <- grepl("/", file)
-
-  # --- Determine file extension ----------------------------------------------
-  ext <- tolower(tools::file_ext(file))
-
-  # --- Supported extensions --------------------------------------------------
-  supported_ext <- c("sav", "dta", "csv", "rds", "sas7bdat", "xpt", "rdata", "rda")
-
-  # --- Handle .RData/.rda redirect -------------------------------------------
-  if (ext %in% c("rdata", "rda")) {
-    stop(
-      ".RData files contain multiple named objects. ",
-      "Use load(\"", file, "\") to load these directly.",
-      call. = FALSE
-    )
-  }
-
-  # --- No extension: search for matching files -------------------------------
-  if (ext == "") {
-    found <- .jst_search_no_extension(file, has_dir)
-    if (length(found) == 0) {
-      search_dirs <- if (has_dir) character(0) else .jst_get_search_dirs()
-      stop(
-        "No file found matching '", file, "' with any supported extension ",
-        "(.sav, .dta, .csv, .rds, .sas7bdat, .xpt).\n",
-        if (length(search_dirs) > 0)
-          paste0("Searched in: ",
-                 paste(ifelse(search_dirs == ".", "working directory",
-                              paste0(search_dirs, " folder")),
-                       collapse = " and "))
-        else
-          paste0("Searched in: ", dirname(file)),
-        call. = FALSE
-      )
-    }
-    if (length(found) == 1) {
-      message("Found ", basename(found), " in ", dirname(found), "/")
-      file    <- found
-      ext     <- tolower(tools::file_ext(file))
-      has_dir <- TRUE
-    } else {
-      msg <- paste0(
-        "Multiple files found matching '", file, "':\n",
-        paste0("  ", found, collapse = "\n"), "\n",
-        "Please include the file extension to specify which one."
-      )
-      stop(msg, call. = FALSE)
-    }
-  }
-
-  # --- Validate extension ----------------------------------------------------
-  if (!ext %in% supported_ext) {
-    stop(
-      "Unsupported file extension '.", ext, "'. Supported formats:\n",
-      "  .sav       SPSS\n",
-      "  .dta       Stata\n",
-      "  .sas7bdat  SAS\n",
-      "  .xpt       SAS transport\n",
-      "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
-      if (ext %in% c("xlsx", "xls"))
-        "\n\nFor Excel files, use the readxl package: readxl::read_excel(\"filename.xlsx\")"
-      else "",
-      call. = FALSE
-    )
-  }
-
-  # --- Resolve file path -----------------------------------------------------
-  if (has_dir) {
-    # Full or relative path provided — use directly
-    resolved_path <- file
-    if (!file.exists(resolved_path)) {
-      stop("File not found: ", resolved_path, call. = FALSE)
-    }
-  } else {
-    # Bare filename — search Data/, data/, then working directory
-    resolved_path <- .jst_find_file(file)
-  }
-
-  # --- Determine object name -------------------------------------------------
-  if (!is.null(name)) {
-    obj_name <- name
-  } else {
-    obj_name <- tools::file_path_sans_ext(basename(file))
-  }
-
-  # Check for leading digit
-  if (grepl("^[0-9]", obj_name)) {
-    stop(
-      "The filename '", basename(file), "' starts with a number. ",
-      "R does not allow variable names to start with a digit.\n",
-      "Please provide a name, e.g.:\n",
-      "  jload(\"", file, "\", name = \"",
-      gsub("^[0-9]+", "", obj_name), "\")",
-      call. = FALSE
-    )
-  }
-
-  # Make syntactically valid (replace spaces, hyphens, etc.)
-  obj_name <- make.names(obj_name)
-
-  # --- Overwrite check -------------------------------------------------------
-  target_env <- parent.frame()
-  if (exists(obj_name, envir = target_env) && !overwrite) {
-    if (interactive()) {
-      response <- readline(
-        paste0("'", obj_name, "' already exists in your environment. ",
-               "Overwrite? (y/n): ")
-      )
-      if (!tolower(trimws(response)) %in% c("y", "yes")) {
-        message("Load cancelled.")
-        return(invisible(NULL))
-      }
-    } else {
-      warning(
-        "'", obj_name, "' already existed and has been replaced.",
-        call. = FALSE
-      )
-    }
-  }
-
-  # --- Read the file ---------------------------------------------------------
-  df <- switch(ext,
-               sav      = haven::read_sav(resolved_path),
-               dta      = haven::read_dta(resolved_path),
-               sas7bdat = haven::read_sas(resolved_path),
-               xpt      = haven::read_xpt(resolved_path),
-               csv      = utils::read.csv(resolved_path, stringsAsFactors = FALSE),
-               rds      = readRDS(resolved_path)
-  )
-
-  # Ensure result is a data frame
-  if (!is.data.frame(df)) {
-    if (ext == "rds") {
-      stop(
-        "The .rds file does not contain a data frame. ",
-        "jload() only loads data frames.",
-        call. = FALSE
-      )
-    }
-    df <- as.data.frame(df)
-  }
-
-  # --- Assign to environment -------------------------------------------------
-  assign(obj_name, df, envir = target_env)
-
-  # --- Summary message -------------------------------------------------------
-  message(
-    "Loaded ", obj_name, ": ",
-    format(nrow(df), big.mark = ","), " cases, ",
-    ncol(df), " variables"
-  )
-
-  # --- Set as default with juse() if requested -------------------------------
-  if (use) {
-    options(.jst_default_data = obj_name)
-    message("Default data frame set to: ", obj_name)
-  }
-
-  # --- Coded missing value scan ----------------------------------------------
-  if (check.missing) {
-    .jst_scan_coded_missing(df, obj_name, ext)
-  }
-
-  invisible(df)
-}
-
-
-# -- jload internal helpers ---------------------------------------------------
-
-#' Internal: search for a file without extension across supported formats
-#' @keywords internal
-.jst_search_no_extension <- function(basename_no_ext, has_dir) {
-
-  search_ext <- c("sav", "dta", "csv", "rds", "sas7bdat", "xpt")
-  found <- character(0)
-
-  if (has_dir) {
-    # Has directory component — search only in that directory
-    for (e in search_ext) {
-      candidate <- paste0(basename_no_ext, ".", e)
-      if (file.exists(candidate)) found <- c(found, candidate)
-    }
-  } else {
-    # Bare filename — search Data/, data/, working directory
-    search_dirs <- .jst_get_search_dirs()
-    for (d in search_dirs) {
-      for (e in search_ext) {
-        candidate <- file.path(d, paste0(basename_no_ext, ".", e))
-        if (file.exists(candidate)) found <- c(found, candidate)
-      }
-    }
-  }
-
-  return(found)
-}
-
-#' Internal: get the ordered list of directories to search for data files
-#' @keywords internal
-.jst_get_search_dirs <- function() {
-  dirs <- c(".")
-  if (dir.exists("Data")) dirs <- c("Data", dirs)
-  if (dir.exists("data") && !dir.exists("Data")) dirs <- c("data", dirs)
-  # If both Data/ and data/ exist (unusual), check both — Data/ first
-  if (dir.exists("Data") && dir.exists("data") &&
-      !identical(normalizePath("Data"), normalizePath("data"))) {
-    dirs <- c("Data", "data", ".")
-  }
-  return(dirs)
-}
-
-#' Internal: find a bare filename in Data/, data/, or working directory
-#' @keywords internal
-.jst_find_file <- function(filename) {
-  search_dirs <- .jst_get_search_dirs()
-  for (d in search_dirs) {
-    candidate <- file.path(d, filename)
-    if (file.exists(candidate)) {
-      if (d != ".") {
-        message("Reading from ", d, "/")
-      }
-      return(candidate)
-    }
-  }
-  stop(
-    "File '", filename, "' not found.\n",
-    "Searched in: ",
-    paste(ifelse(search_dirs == ".", "working directory",
-                 paste0(search_dirs, " folder")),
-          collapse = " and "), "\n",
-    "Check that the filename and extension are correct.",
-    call. = FALSE
-  )
-}
-
-#' Internal: scan for coded missing values and report findings
-#' @keywords internal
-.jst_scan_coded_missing <- function(df, obj_name, ext) {
-
-  max_report <- 20L  # Maximum number of rows to display
-
-  # Collect findings: list of lists with var, value, count, source
-  findings <- list()
-
-  for (vname in names(df)) {
-    col <- df[[vname]]
-    if (!is.numeric(col) && !inherits(col, "haven_labelled")) next
-    # Only scan numeric-like variables
-    num_vals <- suppressWarnings(as.numeric(col))
-    if (all(is.na(num_vals))) next
-
-    # --- Check SPSS user-defined missing values (haven attribute) ---
-    # SPSS-defined missings are checked on ALL values (including decimals)
-    # because SPSS allows any value to be defined as missing.
-    spss_na_vals <- attr(col, "na_values")
-    spss_na_range <- attr(col, "na_range")
-
-    if (!is.null(spss_na_vals)) {
-      for (sv in spss_na_vals) {
-        n_cases <- sum(num_vals == sv, na.rm = TRUE)
-        if (n_cases > 0) {
-          findings[[length(findings) + 1]] <- list(
-            var = vname, value = sv, count = n_cases,
-            source = "defined as missing in original SPSS file"
-          )
-        }
-      }
-    }
-
-    if (!is.null(spss_na_range)) {
-      range_lo <- spss_na_range[1]
-      range_hi <- spss_na_range[2]
-      range_match <- !is.na(num_vals) & num_vals >= range_lo & num_vals <= range_hi
-      if (any(range_match)) {
-        range_vals <- sort(unique(num_vals[range_match]))
-        for (rv in range_vals) {
-          # Skip if already found via na_values
-          already <- any(vapply(findings, function(f) {
-            f$var == vname && f$value == rv
-          }, logical(1)))
-          if (!already) {
-            n_cases <- sum(num_vals == rv, na.rm = TRUE)
-            findings[[length(findings) + 1]] <- list(
-              var = vname, value = rv, count = n_cases,
-              source = "defined as missing in original SPSS file"
-            )
-          }
-        }
-      }
-    }
-
-    # --- Heuristic scan using existing detection function ---
-    # Only scan whole-number values — coded missings are always integers
-    whole_vals <- num_vals[!is.na(num_vals) & num_vals == round(num_vals)]
-    if (length(whole_vals) >= 2) {
-      suspicious <- .jst_detect_suspicious_values(whole_vals, vname)
-      for (sv in suspicious) {
-        # Skip if already reported from SPSS metadata
-        already <- any(vapply(findings, function(f) {
-          f$var == vname && f$value == sv
-        }, logical(1)))
-        if (!already) {
-          n_cases <- sum(num_vals == sv, na.rm = TRUE)
-          findings[[length(findings) + 1]] <- list(
-            var = vname, value = sv, count = n_cases,
-            source = "suspected \u2014 not formally defined"
-          )
-        }
-      }
-    }
-  }
-
-  # --- Report findings -------------------------------------------------------
-  if (length(findings) > 0) {
-    cat("\nPossible coded missing values detected:\n")
-    n_show <- min(length(findings), max_report)
-    for (i in seq_len(n_show)) {
-      f <- findings[[i]]
-      cat(sprintf("  %-15s %6g  (%d case%s)  [%s]\n",
-                  paste0(f$var, ":"), f$value, f$count,
-                  if (f$count == 1) "" else "s", f$source))
-    }
-    if (length(findings) > max_report) {
-      cat(sprintf("  ... and %d more.\n", length(findings) - max_report))
-    }
-    # Build example from first finding
-    ex <- findings[[1]]
-    cat("\nUse jrecode() to convert to NA if needed, e.g.:\n")
-    cat(sprintf("  %s$%s <- jrecode(%s, %s, map = \"%g=NA; else=copy\")\n",
-                obj_name, ex$var, obj_name, ex$var, ex$value))
-    cat("If these are real values, no action is needed.\n")
-  }
-}
-
-
-# -- jsave --------------------------------------------------------------------
-
-#' Save a data frame to a file
-#'
-#' @description
-#' \code{jsave()} writes a data frame to a file. Supports SPSS (\code{.sav}),
-#' Stata (\code{.dta}), SAS transport (\code{.xpt}), CSV (\code{.csv}), and
-#' R's native \code{.rds} format. File format is detected from the extension.
-#'
-#' By default, \code{jsave()} writes to a \code{Data/} subfolder if one
-#' exists, otherwise to the working directory. If the \code{Data/} folder
-#' does not exist, it is created automatically.
-#'
-#' If the \code{data} argument is omitted, the default data frame set by
-#' \code{juse()} is used.
-#'
-#' @param data A data frame (unquoted). If omitted, uses the default set by
-#'   \code{juse()}.
-#' @param file Character string. The filename with extension (e.g.
-#'   \code{"mydata.sav"}) or a full file path. Use forward slashes in
-#'   file paths.
-#' @param overwrite Logical. If \code{TRUE}, overwrites an existing file
-#'   without prompting. If \code{FALSE} (default), prompts for confirmation
-#'   in interactive sessions. In non-interactive sessions, stops with an
-#'   error.
-#'
-#' @return Invisibly returns \code{NULL}. Called for its side effect of
-#'   writing a file to disk.
-#'
-#' @details
-#' \strong{File paths:}
-#' Use forward slashes (\code{/}) in file paths. If you copy a path from
-#' Windows File Explorer, replace the backslashes with forward slashes.
-#' R does not accept single backslashes in file paths.
-#'
-#' \strong{File location:}
-#' \itemize{
-#'   \item If the path contains a directory separator, the file is saved
-#'     to that exact location.
-#'   \item If the path is a bare filename, \code{jsave()} writes to the
-#'     \code{Data/} subfolder (creating it if needed).
-#' }
-#'
-#' \strong{Format notes:}
-#' \itemize{
-#'   \item SPSS (\code{.sav}) and Stata (\code{.dta}) preserve variable
-#'     labels and value labels.
-#'   \item CSV (\code{.csv}) does not preserve variable or value labels.
-#'   \item R native (\code{.rds}) preserves the data frame exactly as it
-#'     exists in R, including all attributes.
-#'   \item Stata files are written as version 14 format.
-#' }
-#'
-#' @examples
-#' \dontrun{
-#' jsave(SampleData, "mydata.sav")
-#' jsave(SampleData, "mydata.csv")
-#' jsave(, "mydata.dta")               # Uses juse() default
-#' jsave(SampleData, "C:/Output/mydata.sav")
-#' }
-#'
-#' @export
-jsave <- function(data, file, overwrite = FALSE) {
-
-  # --- Resolve data frame ----------------------------------------------------
-  if (missing(data)) {
-    resolved <- .jst_resolve_data(envir = parent.frame())
-    data <- resolved$data
-    data_name <- resolved$name
-  } else {
-    # Capture name before evaluation
-    data_name <- deparse(substitute(data))
-    # Check for missing-comma error
-    mc <- match.call()
-    data <- tryCatch(force(data), error = function(e) {
-      .jst_missing_comma_error(deparse(mc$data), "jsave", e)
-    })
-  }
-
-  # --- Validate data is a data frame -----------------------------------------
-  if (!is.data.frame(data)) {
-    stop(
-      "jsave() saves data frames. '", data_name, "' is ",
-      paste0("a ", paste(class(data), collapse = "/"), ", not a data frame."),
-      call. = FALSE
-    )
-  }
-
-  # --- Validate file argument ------------------------------------------------
-  if (missing(file) || !is.character(file) || length(file) != 1 ||
-      nchar(trimws(file)) == 0) {
-    stop(
-      "Please provide a filename with extension, e.g. jsave(MyData, \"mydata.sav\")\n",
-      "Supported formats:\n",
-      "  .sav       SPSS\n",
-      "  .dta       Stata\n",
-      "  .xpt       SAS transport\n",
-      "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
-      call. = FALSE
-    )
-  }
-
-  # --- Check extension -------------------------------------------------------
-  ext <- tolower(tools::file_ext(file))
-
-  if (ext == "") {
-    stop(
-      "No file extension provided. Please include an extension to specify ",
-      "the format:\n",
-      "  .sav       SPSS\n",
-      "  .dta       Stata\n",
-      "  .xpt       SAS transport\n",
-      "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
-      call. = FALSE
-    )
-  }
-
-  supported_ext <- c("sav", "dta", "csv", "rds", "xpt")
-  if (!ext %in% supported_ext) {
-    stop(
-      "Unsupported file extension '.", ext, "'. Supported formats for saving:\n",
-      "  .sav       SPSS\n",
-      "  .dta       Stata\n",
-      "  .xpt       SAS transport\n",
-      "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
-      call. = FALSE
-    )
-  }
-
-  # --- Resolve output path ---------------------------------------------------
-  has_dir <- grepl("/", file)
-
-  if (has_dir) {
-    out_path <- file
-    # Ensure directory exists
-    out_dir <- dirname(out_path)
-    if (!dir.exists(out_dir)) {
-      stop("Directory does not exist: ", out_dir, call. = FALSE)
-    }
-  } else {
-    # Bare filename — write to Data/ (create if needed)
-    if (!dir.exists("Data") && !dir.exists("data")) {
-      dir.create("Data")
-      message("Created 'Data' folder in working directory.")
-      out_path <- file.path("Data", file)
-    } else if (dir.exists("Data")) {
-      out_path <- file.path("Data", file)
-    } else {
-      out_path <- file.path("data", file)
-    }
-  }
-
-  # --- Overwrite check -------------------------------------------------------
-  if (file.exists(out_path) && !overwrite) {
-    if (interactive()) {
-      response <- readline(
-        paste0("File '", out_path, "' already exists. Overwrite? (y/n): ")
-      )
-      if (!tolower(trimws(response)) %in% c("y", "yes")) {
-        message("Save cancelled.")
-        return(invisible(NULL))
-      }
-    } else {
-      stop(
-        "File '", out_path, "' already exists. ",
-        "Use overwrite = TRUE to replace it.",
-        call. = FALSE
-      )
-    }
-  }
-
-  # --- Write the file --------------------------------------------------------
-  switch(ext,
-         sav = haven::write_sav(data, out_path),
-         dta = haven::write_dta(data, out_path, version = 14),
-         xpt = haven::write_xpt(data, out_path),
-         csv = {
-           utils::write.csv(data, out_path, row.names = FALSE)
-           message("Note: CSV format does not preserve variable or value labels.")
-         },
-         rds = saveRDS(data, out_path)
-  )
-
-  # --- Confirmation message --------------------------------------------------
-  message(
-    "Saved ", data_name, " to ", out_path,
-    " (", format(nrow(data), big.mark = ","), " cases, ",
-    ncol(data), " variables)"
-  )
-
-  invisible(NULL)
-}
 
 # -- .onUnload ----------------------------------------------------------------
 
@@ -4613,7 +2711,4 @@ jsave <- function(data, file, overwrite = FALSE) {
 #' @keywords internal
 .onUnload <- function(libpath) {
   options(.jst_default_data = NULL)
-  options(.jst_filter = NULL)
-  options(.jst_complete = NULL)
-  options(.jst_dummy = NULL)
 }

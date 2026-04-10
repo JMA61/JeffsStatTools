@@ -7,6 +7,6 @@
 .print_var_labels(data, var_names)
 }
 \description{
-Used by jt, jaov, jcorr, jchisq, jscreen, and jalpha.
+Used by jt, jaov, jcorr, jcrosstab, jscreen, and jalpha.
 }
 \keyword{internal}

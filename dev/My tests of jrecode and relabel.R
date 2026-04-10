@@ -5,8 +5,11 @@ devtools::load_all()
 devtools::document()
 
 SampleData <- readRDS("../7036_2026/Data/7036CCJSampleData.rds")
+PopulationData <- readRDS("../7036_2026/Data/7036CCJPopulationData.rds")
 
 ?jdesc
+
+?jt()
 jdesc(SampleData, Gender)
 jfreq(SampleData, Gender)
 
@@ -466,7 +469,14 @@ SampleData$GenderR <- jrecode(SampleData, Gender,
 SampleData$GenderR <- jrelabel(, GenderR, labels = "0=A;1=Test;2=B")
 jfreq(,GenderR  )
 
+juse(SampleData)
 
+jdesc(Computer)
+
+jdesc(PopulationData, Computer)
+
+juse(PopulationData)
+jdesc(Computer)
 
 
 

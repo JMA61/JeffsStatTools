@@ -4,12 +4,16 @@
 \alias{jalpha}
 \title{Cronbach's Alpha Reliability Analysis}
 \usage{
-jalpha(data, ..., labels = TRUE)
+jalpha(data, ..., subset = NULL, labels = TRUE)
 }
 \arguments{
 \item{data}{A data frame.}
 
 \item{...}{Unquoted variable names (scale items) within \code{data}.}
+
+\item{subset}{An optional unquoted logical expression (e.g.
+\code{Gender == 1}) to filter cases for this call only. Applied after
+jcomplete and jfilter. Does not affect other function calls.}
 
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
@@ -32,6 +36,11 @@ case processing summary, overall alpha, item statistics, and
 item-total statistics.
 }
 \examples{
+# With explicit data frame
 jalpha(attitude, rating, complaints, privileges, learning, raises)
+
+# Using juse() default
+juse(attitude)
+jalpha(, rating, complaints, privileges, learning, raises)
 
 }

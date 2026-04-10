@@ -12,6 +12,7 @@ jaov(
   effect.size = FALSE,
   levene = FALSE,
   ci = FALSE,
+  subset = NULL,
   labels = TRUE,
   full = FALSE
 )
@@ -34,6 +35,10 @@ of variance.}
 
 \item{ci}{Logical. If TRUE, adds 95\\% confidence intervals to the
 group descriptives table.}
+
+\item{subset}{An optional unquoted logical expression (e.g.
+\code{Gender == 1}) to filter cases for this call only. Applied after
+jcomplete and jfilter. Does not affect other function calls.}
 
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
@@ -59,8 +64,14 @@ A red title identifying the test type is printed first, followed by
 variable labels (if present), then the results tables.
 }
 \examples{
+# With explicit data frame
 jaov(mpg ~ cyl, data = mtcars)
 jaov(mpg ~ cyl, data = mtcars, welch = TRUE)
 jaov(mpg ~ cyl, data = mtcars, full = TRUE)
+
+# Using juse() default
+juse(mtcars)
+jaov(mpg ~ cyl)
+jaov(mpg ~ cyl, full = TRUE)
 
 }

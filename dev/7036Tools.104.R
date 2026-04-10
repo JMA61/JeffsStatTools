@@ -3984,6 +3984,7 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
 
   return(invisible(result))
 }
+
 # -- jload --------------------------------------------------------------------
 
 #' Load a data file into R
@@ -4096,17 +4097,9 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   if (ext == "") {
     found <- .jst_search_no_extension(file, has_dir)
     if (length(found) == 0) {
-      search_dirs <- if (has_dir) character(0) else .jst_get_search_dirs()
       stop(
         "No file found matching '", file, "' with any supported extension ",
-        "(.sav, .dta, .csv, .rds, .sas7bdat, .xpt).\n",
-        if (length(search_dirs) > 0)
-          paste0("Searched in: ",
-                 paste(ifelse(search_dirs == ".", "working directory",
-                              paste0(search_dirs, " folder")),
-                       collapse = " and "))
-        else
-          paste0("Searched in: ", dirname(file)),
+        "(.sav, .dta, .csv, .rds, .sas7bdat, .xpt).",
         call. = FALSE
       )
     }
@@ -4135,9 +4128,6 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
       "  .xpt       SAS transport\n",
       "  .csv       Comma-separated values\n",
       "  .rds       R data (single object)",
-      if (ext %in% c("xlsx", "xls"))
-        "\n\nFor Excel files, use the readxl package: readxl::read_excel(\"filename.xlsx\")"
-      else "",
       call. = FALSE
     )
   }
@@ -4303,8 +4293,8 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     "File '", filename, "' not found.\n",
     "Searched in: ",
     paste(ifelse(search_dirs == ".", "working directory",
-                 paste0(search_dirs, " folder")),
-          collapse = " and "), "\n",
+                 paste0(search_dirs, "/")),
+          collapse = ", "), "\n",
     "Check that the filename and extension are correct.",
     call. = FALSE
   )
@@ -4501,16 +4491,8 @@ jsave <- function(data, file, overwrite = FALSE) {
   # --- Validate file argument ------------------------------------------------
   if (missing(file) || !is.character(file) || length(file) != 1 ||
       nchar(trimws(file)) == 0) {
-    stop(
-      "Please provide a filename with extension, e.g. jsave(MyData, \"mydata.sav\")\n",
-      "Supported formats:\n",
-      "  .sav       SPSS\n",
-      "  .dta       Stata\n",
-      "  .xpt       SAS transport\n",
-      "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
-      call. = FALSE
-    )
+    stop("Please provide a filename with extension, e.g. jsave(MyData, \"mydata.sav\")",
+         call. = FALSE)
   }
 
   # --- Check extension -------------------------------------------------------

@@ -24,6 +24,14 @@ the data. This means any changes you make to the data frame (adding
 columns, recoding variables, etc.) are automatically reflected in
 subsequent function calls.
 }
+\note{
+\code{juse()} stores the \emph{name} of the data frame, not a copy
+of the data. This means any changes you make to the data frame (adding
+columns, recoding variables, etc.) are automatically reflected in
+subsequent function calls. This differs from base R's \code{attach()},
+which creates a snapshot that can become stale after modifications.
+\code{juse()} is the recommended approach for this package.
+}
 \examples{
 \donttest{
 juse(mtcars)           # Set mtcars as the default

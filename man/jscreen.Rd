@@ -4,13 +4,20 @@
 \alias{jscreen}
 \title{Data screening overview}
 \usage{
-jscreen(data, outlier.sd = 3, labels = TRUE)
+jscreen(data, ..., outlier.sd = 3, subset = NULL, labels = TRUE)
 }
 \arguments{
 \item{data}{A data frame.}
 
+\item{...}{Optional unquoted variable names to screen. If omitted,
+all variables in the data frame are screened.}
+
 \item{outlier.sd}{Numeric. Number of standard deviations from the mean
 to flag as potential outliers. Default is 3.}
+
+\item{subset}{An optional unquoted logical expression (e.g.
+\code{Gender == 1}) to filter cases for this call only. Applied after
+jcomplete and jfilter. Does not affect other function calls.}
 
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
@@ -25,11 +32,23 @@ potential outliers for numeric variables. Handles haven-labelled
 variables by reporting their labelled status.
 }
 \details{
+When variable names are supplied, only those variables are screened.
+When omitted, all variables in the data frame are screened. If a
+\code{subset} expression references variables not already in the
+screening list, they are included automatically.
+
 A red "Data Screening" title is printed first, followed by a dataset
 summary, variable labels (if present), and the screening table.
 }
 \examples{
+# With explicit data frame
 jscreen(mtcars)
 jscreen(mtcars, outlier.sd = 2.5)
+
+# Using juse() default
+juse(mtcars)
+jscreen()
+jscreen(, mpg, hp, wt)
+jscreen(, mpg, hp, wt, subset = am == 1)
 
 }
