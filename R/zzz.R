@@ -1,5 +1,6 @@
 
 .onAttach <- function(libname, pkgname) {
+  if (!interactive()) return()
   installed_ver <- as.character(utils::packageVersion("JeffsStatTools"))
 
   tryCatch({
