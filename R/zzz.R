@@ -17,7 +17,8 @@
         " You have version ", installed_ver, ".\n",
         " To update, run:\n",
         "   detach('package:JeffsStatTools', unload = TRUE)\n",
-        "   remotes::install_github('JMA61/JeffsStatTools')\n",
+        "   remotes::install_github('JMA61/JeffsStatTools', upgrade = 'never')\n",
+        "   library(JeffsStatTools)\n",
         "======================================================="
       )
     } else {

@@ -519,7 +519,11 @@
       "Otherwise, check spelling and capitalisation, or verify the data frame is loaded."
     ), call. = FALSE)
   } else {
-    stop(conditionMessage(original_error), call. = FALSE)
+    stop(paste0(
+      "'", data_expr_str, "' not found. Did you mean to use it as a variable name?\n",
+      "If so, provide the data frame: ", fn_name, "(MyData, ", data_expr_str, ")\n",
+      "Or set a default first with juse(MyData), then: ", fn_name, "(, ", data_expr_str, ")"
+    ), call. = FALSE)
   }
 }
 
