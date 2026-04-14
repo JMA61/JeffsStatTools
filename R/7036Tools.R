@@ -1470,7 +1470,7 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
     }
     temp_df  <- data.frame(x = data)
     names(temp_df) <- var_name
-    return(jdesc(temp_df, !!rlang::sym(var_name), labels = FALSE))
+    return(jdesc(temp_df, !!rlang::sym(var_name), labels = labels))
   }
 
   variables      <- rlang::enquos(...)
@@ -1759,7 +1759,7 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
     }
     temp_df  <- data.frame(x = data)
     names(temp_df) <- var_name
-    return(jfreq(temp_df, !!rlang::sym(var_name), labels = FALSE))
+    return(jfreq(temp_df, !!rlang::sym(var_name), labels = labels))
   }
 
   variables <- rlang::enquos(...)

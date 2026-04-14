@@ -1,6 +1,6 @@
 Package: JeffsStatTools
 Title: SPSS-Style Descriptive, Frequency, and Regression Tools for Teaching
-Version: 0.6.2
+Version: 0.6.3
 Authors@R:
     person("Jeff", "Ackerman", , "SurveyCentre@griffith.edu.au", role = c("aut", "cre"))
 Description: Provides SPSS-like descriptive statistics, frequency tables,
@@ -22,4 +22,4 @@ Imports:
     rlang,
     readxl,
     writexl
-Date: 2026-04-10
+Date: 2026-04-14
