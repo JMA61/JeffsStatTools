@@ -28,6 +28,10 @@ A list with components:
 \describe{
 \item{data}{The filtered data frame.}
 \item{msgs}{Character vector of info-line messages to print.}
+\item{pipeline_counts}{A list of pipeline counts: \code{n_original},
+\code{n_after_complete}, \code{n_after_filter}, \code{n_after_subset}
+(each NULL if that step was not active), \code{complete_active},
+\code{filter_active}, \code{filter_expr}.}
 }
 }
 \description{

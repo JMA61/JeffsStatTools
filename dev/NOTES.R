@@ -15,13 +15,13 @@ devtools::check(remote = TRUE) ## an even more thorough check to mimic closer to
 
 # To Commit the new version:
 git add -A
-git commit -m "v0.6.3: Fixed messages in jdesc() and jfreq()"
+git commit -m "v0.6.4: Improved/updated help files for jload and jsave. Improved returns for all functions to permit joutput() output control and future development."
 
 # To Push/Upload to GitHub
 git push
 
 # To create the version tag
-git tag -a v0.6.3 -m "Version 0.6.3"
+git tag -a v0.6.4 -m "Version 0.6.4"
 git push --tags
 
 # Verity that the tag exists:

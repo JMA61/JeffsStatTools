@@ -48,8 +48,11 @@ assigning the data frame in the calling environment.
 \code{jload()} reads a data file and assigns it as a data frame in your
 environment. Supports SPSS (\code{.sav}), Stata (\code{.dta}), SAS
 (\code{.sas7bdat}, \code{.xpt}), Excel (\code{.xlsx}, \code{.xls}),
-CSV (\code{.csv}), and R's native \code{.rds} format. File format is
-detected from the extension.
+CSV (\code{.csv}), and R's native \code{.rds} format.
+
+The file format is determined entirely by the file extension ---
+\code{jload()} reads the extension (e.g. \code{.sav}, \code{.dta},
+\code{.xlsx}) and uses the appropriate reader automatically.
 
 By default, \code{jload()} looks for the file in a \code{Data/} (or
 \code{data/}) subfolder of the working directory first, then the
@@ -101,13 +104,32 @@ to convert them to \code{NA} if needed.
 }
 \examples{
 \dontrun{
+# SPSS
 jload("mydata.sav")
 jload("mydata.sav", use = TRUE)
 jload("mydata.sav", name = "MySurvey")
-jload("C:/Projects/Data/mydata.dta")
+
+# Stata
+jload("mydata.dta")
+
+# SAS
+jload("mydata.sas7bdat")
+jload("mydata.xpt")
+
+# Excel
 jload("mydata.xlsx")
 jload("mydata.xlsx", sheet = "Wave2")
 jload("mydata.xlsx", sheet = 2)
+
+# CSV and R native
+jload("mydata.csv")
+jload("mydata.rds")
+
+#' # Extension omitted — jload searches for a matching file automatically
+jload("mydata")
+
+# Full file path
+jload("C:/Projects/Data/mydata.dta")
 }
 
 }

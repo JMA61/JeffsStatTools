@@ -38,8 +38,11 @@ jcomplete and jfilter. Does not affect other function calls.}
 when available.}
 }
 \value{
-Invisibly returns a list containing the cross-tabulation and,
-if requested, the chi-square statistic, degrees of freedom, and p value.
+Invisibly returns a list of class \code{"jst_chisq"} containing:
+\code{observed} (observed frequency table), \code{expected} (expected
+frequency table), \code{n} (total N), \code{sample_info} (pipeline and
+missing data counts), and if \code{chisq = TRUE}: \code{chi_square},
+\code{df}, and \code{p}.
 }
 \description{
 Produces an SPSS-style cross-tabulation of two categorical variables

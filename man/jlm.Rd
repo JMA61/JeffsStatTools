@@ -36,7 +36,7 @@ The first sorted unique value becomes the reference category. Use
 \code{jdummy()} for control over the reference category.}
 }
 \value{
-Invisibly returns a list containing:
+Invisibly returns a list of class \code{"jst_lm"} containing:
 \describe{
 \item{model}{The fitted \code{lm} object.}
 \item{model_type}{Character string \code{"linear"}.}
@@ -53,6 +53,7 @@ Invisibly returns a list containing:
 \code{jdummy()} registrations.}
 \item{ref_cats}{Reference category descriptions for all categorical
 variables in the model.}
+\item{sample_info}{Pipeline and missing data counts.}
 }
 }
 \description{

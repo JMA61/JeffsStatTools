@@ -8,10 +8,10 @@ jaov(
   formula,
   data,
   welch = FALSE,
-  posthoc = FALSE,
-  effect.size = FALSE,
-  levene = FALSE,
-  ci = FALSE,
+  posthoc = NULL,
+  effect.size = NULL,
+  levene = NULL,
+  ci = NULL,
   subset = NULL,
   labels = TRUE,
   full = FALSE
@@ -25,16 +25,18 @@ jaov(
 \item{welch}{Logical. If FALSE (default), runs traditional ANOVA.
 If TRUE, runs Welch's ANOVA (does not assume equal variances).}
 
-\item{posthoc}{Logical. If TRUE, prints Tukey HSD pairwise comparisons.
-Not available when welch = TRUE.}
+\item{posthoc}{Logical or NULL. If TRUE, prints Tukey HSD pairwise comparisons.
+Not available when welch = TRUE. If NULL (default), defers to
+\code{joutput()}.}
 
-\item{effect.size}{Logical. If TRUE, prints eta-squared.}
+\item{effect.size}{Logical or NULL. If TRUE, prints eta-squared. If NULL
+(default), defers to \code{joutput()}.}
 
-\item{levene}{Logical. If TRUE, prints Levene's test for homogeneity
-of variance.}
+\item{levene}{Logical or NULL. If TRUE, prints Levene's test for homogeneity
+of variance. If NULL (default), defers to \code{joutput()}.}
 
-\item{ci}{Logical. If TRUE, adds 95\\% confidence intervals to the
-group descriptives table.}
+\item{ci}{Logical or NULL. If TRUE, adds 95\\% confidence intervals to the
+group descriptives table. If NULL (default), defers to \code{joutput()}.}
 
 \item{subset}{An optional unquoted logical expression (e.g.
 \code{Group == 1}) to filter cases for this call only. Applied after
@@ -44,10 +46,14 @@ jcomplete and jfilter. Does not affect other function calls.}
 when available.}
 
 \item{full}{Logical. If TRUE, turns on posthoc, effect.size, levene,
-and ci all at once.}
+and ci all at once. Does not override explicit FALSE values.}
 }
 \value{
-Invisibly returns the model object (aov or oneway.test).
+Invisibly returns a list of class \code{"jst_anova"} containing:
+\code{model} (the \code{aov} or \code{oneway.test} object), \code{test_type},
+\code{formula}, \code{descriptives}, \code{f}, \code{df1}, \code{df2},
+\code{p}, \code{eta_squared}, \code{n}, and \code{sample_info}
+(pipeline and missing data counts).
 }
 \description{
 Runs a one-way ANOVA and prints a formatted group descriptives table

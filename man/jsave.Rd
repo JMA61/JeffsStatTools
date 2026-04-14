@@ -26,12 +26,16 @@ writing a file to disk.
 \description{
 \code{jsave()} writes a data frame to a file. Supports SPSS (\code{.sav}),
 Stata (\code{.dta}), SAS transport (\code{.xpt}), Excel (\code{.xlsx}),
-CSV (\code{.csv}), and R's native \code{.rds} format. File format is
-detected from the extension.
+CSV (\code{.csv}), and R's native \code{.rds} format.
 
-By default, \code{jsave()} writes to a \code{Data/} subfolder if one
-exists, otherwise to the working directory. If the \code{Data/} folder
-does not exist, it is created automatically.
+The file format is determined entirely by the file extension you
+provide --- for example, \code{"mydata.sav"} saves as SPSS,
+\code{"mydata.dta"} saves as Stata, and \code{"mydata.xlsx"} saves
+as Excel. Changing the extension changes the format.
+
+By default, \code{jsave()} writes to a \code{Data/} subfolder. If a
+\code{Data/} (or \code{data/}) folder already exists, it is used. If
+neither exists, a \code{Data/} folder is created automatically.
 
 If the \code{data} argument is omitted, the default data frame set by
 \code{juse()} is used.
@@ -47,7 +51,8 @@ R does not accept single backslashes in file paths.
 \item If the path contains a directory separator, the file is saved
 to that exact location.
 \item If the path is a bare filename, \code{jsave()} writes to the
-\code{Data/} subfolder (creating it if needed).
+\code{Data/} subfolder (using an existing one, or creating one
+if neither \code{Data/} nor \code{data/} exists).
 }
 
 \strong{Format notes:}
@@ -65,10 +70,19 @@ Use \code{.xlsx} instead.
 }
 \examples{
 \dontrun{
-jsave(MyData, "mydata.sav")
-jsave(MyData, "mydata.csv")
-jsave(MyData, "mydata.xlsx")
-jsave(, "mydata.dta")               # Uses juse() default
+# The file extension determines the format ---
+# the same data frame can be saved in any supported format
+jsave(MyData, "mydata.sav")         # SPSS
+jsave(MyData, "mydata.dta")         # Stata
+jsave(MyData, "mydata.xpt")         # SAS transport
+jsave(MyData, "mydata.xlsx")        # Excel
+jsave(MyData, "mydata.csv")         # CSV
+jsave(MyData, "mydata.rds")         # R native
+
+# Using juse() default
+jsave(, "mydata.sav")
+
+# Full file path
 jsave(MyData, "C:/Output/mydata.sav")
 }
 

@@ -477,59 +477,6 @@
   )
 }
 
-# Output level preset defaults (used by .jst_resolve_toggle and joutput)
-.jst_output_defaults <- list(
-  minimal  = list(effect.size = FALSE, ci = FALSE, levene = FALSE,
-                  posthoc = FALSE, missing = FALSE),
-  standard = list(effect.size = TRUE,  ci = TRUE,  levene = FALSE,
-                  posthoc = FALSE, missing = FALSE),
-  full     = list(effect.size = TRUE,  ci = TRUE,  levene = TRUE,
-                  posthoc = TRUE,  missing = TRUE)
-)
-
-#' Internal helper: resolve a display toggle value
-#'
-#' Implements three-tier precedence: (1) explicit per-call argument wins,
-#' (2) individual joutput() toggle override, (3) joutput() level default.
-#' Per-call arguments use NULL to mean "I didn't specify — defer to joutput()".
-#'
-#' @param name Character. Toggle name (e.g. "effect.size", "ci", "levene").
-#' @param per_call_value The value passed by the user in the function call,
-#'   or NULL if not specified.
-#'
-#' @return Logical. TRUE or FALSE.
-#'
-#' @keywords internal
-.jst_resolve_toggle <- function(name, per_call_value) {
-  # 1. Explicit per-call argument wins
-  if (!is.null(per_call_value)) return(per_call_value)
-  # 2. Check individual toggle override from joutput()
-  toggles <- getOption(".jst_output_toggles", list())
-  if (name %in% names(toggles)) return(toggles[[name]])
-  # 3. Fall back to level default
-  level    <- getOption(".jst_output_level", "minimal")
-  defaults <- .jst_output_defaults
-  defaults[[level]][[name]]
-}
-
-#' Internal helper: print per-variable missing data breakdown
-#'
-#' Prints a detail line showing how many missing values each analysis variable
-#' contributed. Only called when the missing toggle is active and there are
-#' missing values.
-#'
-#' @param missing_by_var Named integer vector from sample_info$missing_by_var.
-#'
-#' @keywords internal
-.jst_print_missing_detail <- function(missing_by_var) {
-  has_missing <- missing_by_var[missing_by_var > 0]
-  if (length(has_missing) > 0) {
-    detail <- paste0(names(has_missing), " (", has_missing, ")",
-                     collapse = ", ")
-    cat("  Missing by variable: ", detail, "\n", sep = "")
-  }
-}
-
 #' Internal helper: check that variable names exist in a data frame
 #'
 #' Produces a clear error message listing any variables not found,
@@ -1509,124 +1456,6 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
 }
 
 
-# -- joutput -------------------------------------------------------------------
-
-#' Set session-level output verbosity
-#'
-#' Controls what analysis functions display by default. Three preset levels
-#' are available, and individual toggles can override specific settings
-#' within any level. Per-call arguments on analysis functions always take
-#' precedence over joutput() settings.
-#'
-#' @param level Character. One of \code{"minimal"} (default), \code{"standard"},
-#'   or \code{"full"}. If omitted, prints the current settings.
-#'   If \code{NULL}, resets to defaults (minimal with no toggle overrides).
-#'   \describe{
-#'     \item{minimal}{Current default behaviour. Core results only.}
-#'     \item{standard}{Adds effect sizes and confidence intervals.}
-#'     \item{full}{Adds assumption checks (Levene's test), post-hoc tests,
-#'       and per-variable missing data detail.}
-#'   }
-#' @param effect.size Logical or NULL. Override the level's default for
-#'   effect size display.
-#' @param ci Logical or NULL. Override the level's default for confidence
-#'   interval display.
-#' @param levene Logical or NULL. Override the level's default for
-#'   Levene's test display.
-#' @param posthoc Logical or NULL. Override the level's default for
-#'   post-hoc test display (jaov only).
-#' @param missing Logical or NULL. Override the level's default for
-#'   per-variable missing data detail.
-#'
-#' @return Invisibly returns NULL. Called for its side effect of setting
-#'   session options.
-#'
-#' @examples
-#' joutput("standard")                     # effect sizes + CIs on all analyses
-#' joutput("minimal", ci = TRUE)           # minimal + CIs only
-#' joutput("full")                         # everything
-#' joutput()                               # show current settings
-#' joutput(NULL)                           # reset to defaults
-#'
-#' @export
-joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
-                    posthoc = NULL, missing = NULL) {
-
-  valid_levels <- c("minimal", "standard", "full")
-
-  # joutput(NULL) — reset to defaults
-  if (!missing(level) && is.null(level)) {
-    options(.jst_output_level = NULL)
-    options(.jst_output_toggles = NULL)
-    .cat_red("Output Settings\n")
-    cat("Reset to defaults (minimal, no toggle overrides).\n\n")
-    return(invisible(NULL))
-  }
-
-  # Collect any explicit toggle overrides
-  toggle_args <- list()
-  if (!is.null(effect.size)) toggle_args$effect.size <- effect.size
-  if (!is.null(ci))          toggle_args$ci          <- ci
-  if (!is.null(levene))      toggle_args$levene      <- levene
-  if (!is.null(posthoc))     toggle_args$posthoc     <- posthoc
-  if (!is.null(missing))     toggle_args$missing     <- missing
-
-  # joutput() with no level argument — show status or apply toggles only
-  if (missing(level)) {
-    if (length(toggle_args) > 0) {
-      # Apply toggle overrides to current settings
-      current_toggles <- getOption(".jst_output_toggles", list())
-      for (nm in names(toggle_args)) current_toggles[[nm]] <- toggle_args[[nm]]
-      options(.jst_output_toggles = current_toggles)
-    }
-    # Show current status
-    .jst_output_status()
-    return(invisible(NULL))
-  }
-
-  # Validate level
-  if (!is.character(level) || length(level) != 1 || !(level %in% valid_levels)) {
-    stop("level must be one of: \"minimal\", \"standard\", \"full\".",
-         call. = FALSE)
-  }
-
-  # Set level and toggles
-  options(.jst_output_level = level)
-  if (length(toggle_args) > 0) {
-    options(.jst_output_toggles = toggle_args)
-  } else {
-    options(.jst_output_toggles = NULL)
-  }
-
-  .jst_output_status()
-  invisible(NULL)
-}
-
-#' Internal helper: print current joutput() status
-#'
-#' @keywords internal
-.jst_output_status <- function() {
-  level   <- getOption(".jst_output_level", "minimal")
-  toggles <- getOption(".jst_output_toggles", list())
-
-  .cat_red("Output Settings\n")
-  cat("Level: ", level, "\n", sep = "")
-
-  # Show effective value for each toggle
-  toggle_names <- c("effect.size", "ci", "levene", "posthoc", "missing")
-  defaults     <- .jst_output_defaults[[level]]
-
-  for (nm in toggle_names) {
-    default_val  <- defaults[[nm]]
-    effective    <- if (nm %in% names(toggles)) toggles[[nm]] else default_val
-    override_str <- if (nm %in% names(toggles)) " (override)" else ""
-    cat("  ", nm, ": ", if (effective) "ON" else "OFF",
-        override_str, "\n", sep = "")
-  }
-  cat("\n")
-}
-
-
 # -- jdesc --------------------------------------------------------------------
 
 #' Descriptive statistics for one or more variables
@@ -2182,20 +2011,18 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
 #' @param welch Logical. If FALSE (default), runs Student's t-test
 #'   (equal variances assumed). If TRUE, runs Welch's t-test. Ignored
 #'   when paired = TRUE.
-#' @param effect.size Logical or NULL. If TRUE, prints Cohen's d. If NULL
-#'   (default), defers to \code{joutput()} session setting.
-#' @param levene Logical or NULL. If TRUE, prints Levene's test for homogeneity
-#'   of variance. Ignored when paired = TRUE. If NULL (default), defers to
-#'   \code{joutput()}.
-#' @param ci Logical or NULL. If TRUE, adds 95\% confidence interval for the
-#'   mean difference. If NULL (default), defers to \code{joutput()}.
+#' @param effect.size Logical. If TRUE, prints Cohen's d.
+#' @param levene Logical. If TRUE, prints Levene's test for homogeneity
+#'   of variance. Ignored when paired = TRUE.
+#' @param ci Logical. If TRUE, adds 95\% confidence interval for the
+#'   mean difference.
 #' @param subset An optional unquoted logical expression (e.g.
 #'   \code{Group == 1}) to filter cases for this call only. Applied after
 #'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #' @param full Logical. If TRUE, turns on effect.size, levene, and ci
-#'   all at once. Does not override explicit FALSE values.
+#'   all at once.
 #'
 #' @return Invisibly returns a list of class \code{"jst_ttest"} containing:
 #'   \code{model} (the \code{t.test} result), \code{test_type}, \code{formula},
@@ -2217,7 +2044,7 @@ jfreq <- function(data, ..., subset = NULL, labels = TRUE) {
 #' @export
 #' @importFrom stats t.test sd qt
 jt <- function(formula, data, paired = FALSE, welch = FALSE,
-               effect.size = NULL, levene = NULL, ci = NULL,
+               effect.size = FALSE, levene = FALSE, ci = FALSE,
                subset = NULL, labels = TRUE, full = FALSE) {
 
   # Resolve default data frame if not specified
@@ -2233,16 +2060,10 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   }
 
   if (full) {
-    if (is.null(effect.size)) effect.size <- TRUE
-    if (is.null(levene))      levene      <- TRUE
-    if (is.null(ci))          ci          <- TRUE
+    effect.size <- TRUE
+    levene      <- TRUE
+    ci          <- TRUE
   }
-
-  # Resolve display toggles: per-call > joutput() toggle > joutput() level
-  effect.size <- .jst_resolve_toggle("effect.size", effect.size)
-  ci          <- .jst_resolve_toggle("ci",          ci)
-  levene      <- .jst_resolve_toggle("levene",      levene)
-  show_missing <- .jst_resolve_toggle("missing",    NULL)
 
   # Red title - determined before any output
   if (paired) {
@@ -2273,10 +2094,6 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   n_excluded_na <- n_before_na - nrow(complete_on)
   if (n_excluded_na > 0) {
     cat("(", n_excluded_na, " cases excluded due to missing values)\n", sep = "")
-    if (show_missing) {
-      mbv <- vapply(terms, function(v) sum(is.na(data[[v]])), integer(1))
-      .jst_print_missing_detail(mbv)
-    }
   }
 
   group_var   <- data[[group_name]]
@@ -2503,22 +2320,20 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
 #' @param data A data frame containing variables referenced in \code{formula}.
 #' @param welch Logical. If FALSE (default), runs traditional ANOVA.
 #'   If TRUE, runs Welch's ANOVA (does not assume equal variances).
-#' @param posthoc Logical or NULL. If TRUE, prints Tukey HSD pairwise comparisons.
-#'   Not available when welch = TRUE. If NULL (default), defers to
-#'   \code{joutput()}.
-#' @param effect.size Logical or NULL. If TRUE, prints eta-squared. If NULL
-#'   (default), defers to \code{joutput()}.
-#' @param levene Logical or NULL. If TRUE, prints Levene's test for homogeneity
-#'   of variance. If NULL (default), defers to \code{joutput()}.
-#' @param ci Logical or NULL. If TRUE, adds 95\% confidence intervals to the
-#'   group descriptives table. If NULL (default), defers to \code{joutput()}.
+#' @param posthoc Logical. If TRUE, prints Tukey HSD pairwise comparisons.
+#'   Not available when welch = TRUE.
+#' @param effect.size Logical. If TRUE, prints eta-squared.
+#' @param levene Logical. If TRUE, prints Levene's test for homogeneity
+#'   of variance.
+#' @param ci Logical. If TRUE, adds 95\% confidence intervals to the
+#'   group descriptives table.
 #' @param subset An optional unquoted logical expression (e.g.
 #'   \code{Group == 1}) to filter cases for this call only. Applied after
 #'   jcomplete and jfilter. Does not affect other function calls.
 #' @param labels Logical. If TRUE (default), prints variable labels
 #'   when available.
 #' @param full Logical. If TRUE, turns on posthoc, effect.size, levene,
-#'   and ci all at once. Does not override explicit FALSE values.
+#'   and ci all at once.
 #'
 #' @return Invisibly returns a list of class \code{"jst_anova"} containing:
 #'   \code{model} (the \code{aov} or \code{oneway.test} object), \code{test_type},
@@ -2539,8 +2354,8 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
 #'
 #' @export
 #' @importFrom stats aov oneway.test TukeyHSD qt
-jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
-                 effect.size = NULL, levene = NULL, ci = NULL,
+jaov <- function(formula, data, welch = FALSE, posthoc = FALSE,
+                 effect.size = FALSE, levene = FALSE, ci = FALSE,
                  subset = NULL, labels = TRUE, full = FALSE) {
 
   # Resolve default data frame if not specified
@@ -2556,18 +2371,11 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
   }
 
   if (full) {
-    if (is.null(posthoc))     posthoc     <- TRUE
-    if (is.null(effect.size)) effect.size <- TRUE
-    if (is.null(levene))      levene      <- TRUE
-    if (is.null(ci))          ci          <- TRUE
+    posthoc     <- TRUE
+    effect.size <- TRUE
+    levene      <- TRUE
+    ci          <- TRUE
   }
-
-  # Resolve display toggles: per-call > joutput() toggle > joutput() level
-  effect.size  <- .jst_resolve_toggle("effect.size", effect.size)
-  ci           <- .jst_resolve_toggle("ci",          ci)
-  levene       <- .jst_resolve_toggle("levene",      levene)
-  posthoc      <- .jst_resolve_toggle("posthoc",     posthoc)
-  show_missing <- .jst_resolve_toggle("missing",     NULL)
 
   # Red title
   if (welch) {
@@ -2596,10 +2404,6 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
   n_excluded_na <- n_before_na - nrow(complete_on)
   if (n_excluded_na > 0) {
     cat("(", n_excluded_na, " cases excluded due to missing values)\n", sep = "")
-    if (show_missing) {
-      mbv <- vapply(terms, function(v) sum(is.na(data[[v]])), integer(1))
-      .jst_print_missing_detail(mbv)
-    }
   }
 
   group_var   <- data[[group_name]]
@@ -3183,9 +2987,6 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE,
   data     <- pipeline$data
   .jst_print_msgs(pipeline$msgs)
 
-  # Resolve missing detail toggle
-  show_missing <- .jst_resolve_toggle("missing", NULL)
-
   model_vars <- all.vars(formula)
 
   .jst_check_vars(data, model_vars, .jst_data_name)
@@ -3370,12 +3171,6 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE,
   n_excluded_na <- nrow(data) - nrow(mf)
   if (n_excluded_na > 0) {
     cat("(", n_excluded_na, " cases excluded due to missing values)\n", sep = "")
-    if (show_missing) {
-      mbv <- vapply(model_vars, function(v) {
-        if (v %in% names(data)) sum(is.na(data[[v]])) else 0L
-      }, integer(1))
-      .jst_print_missing_detail(mbv)
-    }
   }
   model         <- stats::lm(formula, data = mf)
   model_summary <- summary(model)
@@ -3581,19 +3376,12 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
   data     <- pipeline$data
   .jst_print_msgs(pipeline$msgs)
 
-  # Resolve missing detail toggle
-  show_missing <- .jst_resolve_toggle("missing", NULL)
-
   # Report cases excluded due to missing values
   n_before_na <- nrow(data)
   complete_on <- data[stats::complete.cases(data[, c(row_name, col_name), drop = FALSE]), , drop = FALSE]
   n_excluded_na <- n_before_na - nrow(complete_on)
   if (n_excluded_na > 0) {
     cat("(", n_excluded_na, " cases excluded due to missing values)\n", sep = "")
-    if (show_missing) {
-      mbv <- vapply(c(row_name, col_name), function(v) sum(is.na(data[[v]])), integer(1))
-      .jst_print_missing_detail(mbv)
-    }
   }
 
   row_var <- data[[row_name]]
@@ -5854,6 +5642,4 @@ jsave <- function(data, file, overwrite = FALSE) {
   options(.jst_filter = NULL)
   options(.jst_complete = NULL)
   options(.jst_dummy = NULL)
-  options(.jst_output_level = NULL)
-  options(.jst_output_toggles = NULL)
 }

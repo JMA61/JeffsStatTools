@@ -9,9 +9,9 @@ jt(
   data,
   paired = FALSE,
   welch = FALSE,
-  effect.size = FALSE,
-  levene = FALSE,
-  ci = FALSE,
+  effect.size = NULL,
+  levene = NULL,
+  ci = NULL,
   subset = NULL,
   labels = TRUE,
   full = FALSE
@@ -29,13 +29,15 @@ groups must have equal sample sizes. Default is FALSE.}
 (equal variances assumed). If TRUE, runs Welch's t-test. Ignored
 when paired = TRUE.}
 
-\item{effect.size}{Logical. If TRUE, prints Cohen's d.}
+\item{effect.size}{Logical or NULL. If TRUE, prints Cohen's d. If NULL
+(default), defers to \code{joutput()} session setting.}
 
-\item{levene}{Logical. If TRUE, prints Levene's test for homogeneity
-of variance. Ignored when paired = TRUE.}
+\item{levene}{Logical or NULL. If TRUE, prints Levene's test for homogeneity
+of variance. Ignored when paired = TRUE. If NULL (default), defers to
+\code{joutput()}.}
 
-\item{ci}{Logical. If TRUE, adds 95\\% confidence interval for the
-mean difference.}
+\item{ci}{Logical or NULL. If TRUE, adds 95\\% confidence interval for the
+mean difference. If NULL (default), defers to \code{joutput()}.}
 
 \item{subset}{An optional unquoted logical expression (e.g.
 \code{Group == 1}) to filter cases for this call only. Applied after
@@ -45,10 +47,14 @@ jcomplete and jfilter. Does not affect other function calls.}
 when available.}
 
 \item{full}{Logical. If TRUE, turns on effect.size, levene, and ci
-all at once.}
+all at once. Does not override explicit FALSE values.}
 }
 \value{
-Invisibly returns the \code{t.test} result object.
+Invisibly returns a list of class \code{"jst_ttest"} containing:
+\code{model} (the \code{t.test} result), \code{test_type}, \code{formula},
+\code{descriptives}, \code{t}, \code{df}, \code{p}, \code{mean_difference},
+\code{ci} (95\\% CI), \code{cohens_d}, \code{d_label}, \code{n}, and
+\code{sample_info} (pipeline and missing data counts).
 }
 \description{
 Runs a t-test and prints formatted group descriptives and test results.

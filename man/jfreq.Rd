@@ -20,8 +20,9 @@ jcomplete and jfilter. Does not affect other function calls.}
 and label (or "None") beneath the title.}
 }
 \value{
-Invisibly returns a named list of data frames (one per variable)
-containing the frequency table.
+Invisibly returns a list of class \code{"jst_freq"} containing:
+\code{frequencies} (named list of data frames, one per variable) and
+\code{sample_info} (pipeline and missing data counts).
 }
 \description{
 Prints an SPSS-style frequency table (Freq, Total \\%, Valid \\%, Cum. \\%) for

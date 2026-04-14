@@ -22,8 +22,10 @@ jcomplete and jfilter. Does not affect other function calls.}
 when available.}
 }
 \value{
-Invisibly returns a list containing the correlation matrix,
-p-value matrix, and pairwise N matrix.
+Invisibly returns a list of class \code{"jst_corr"} containing:
+\code{r} (correlation matrix), \code{p} (p-value matrix),
+\code{n} (pairwise N matrix), \code{method}, and \code{sample_info}
+(pipeline and missing data counts).
 }
 \description{
 Computes pairwise correlations and prints a formatted lower-triangle
