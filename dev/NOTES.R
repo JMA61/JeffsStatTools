@@ -17,9 +17,6 @@ devtools::load_all()
 
 # To Commit the new version:
 git add -A
-git commit -m "v0.7.0: jload and jsave jlogistic - Improved/updated help files.  Improved returns for all functions to permit joutput() output control and future development."
-
-
 
 git commit -m "v0.8.0: jplot() unified plotting function
 
