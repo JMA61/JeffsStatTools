@@ -3966,23 +3966,48 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE,
       next
     }
 
-    # --- Auto-detection (unified classifier) ---
+    # --- Auto-detection (two-helper classifier) ---
+    #
+    # Intent helper first: only factor the IV when the user has explicitly
+    # signalled categorical (jdummy-registered, or factor/logical/character
+    # class). jdummy-registered IVs are actually handled upstream by
+    # .jst_expand_dummies() and won't reach this block; the Rule A check
+    # inside .jst_is_categorical() is defensive.
+    #
+    # If the intent helper returns FALSE, the IV enters the model as
+    # numeric. The structural helper (.jst_is_discrete_integer()) is then
+    # consulted purely to decide whether to warn the user: if the variable
+    # has categorical-looking structure (haven-labelled with labels in
+    # data, or small-range whole-number numeric), the user may have meant
+    # to register with jdummy() or pass categorical = instead.
     if (.jst_is_categorical(data[[v]], v, .jst_data_name)) {
-      # Classified categorical — convert to factor
-      if (haven::is.labelled(data[[v]])) {
-        data[[v]] <- haven::as_factor(data[[v]])
-      } else if (!is.factor(data[[v]])) {
+      # Intent categorical — convert to factor
+      if (!is.factor(data[[v]])) {
         unique_vals <- sort(unique(data[[v]][!is.na(data[[v]])]))
         data[[v]] <- factor(data[[v]], levels = unique_vals)
       }
       ref_level <- levels(data[[v]])[1]
       auto_ref_cats <- c(auto_ref_cats, paste0(v, " = ", ref_level))
     } else {
-      # Classified continuous — strip haven class if present
+      # Not intent-categorical. Strip haven class if present, leave as
+      # numeric in the model. If the variable has categorical-like
+      # structure, emit an informational warning so the user can confirm
+      # the choice.
       if (haven::is.labelled(data[[v]])) {
         data[[v]] <- as.numeric(data[[v]])
       }
-      # Plain numeric stays as-is
+      if (.jst_is_discrete_integer(data[[v]], v, .jst_data_name)) {
+        warning(
+          "'", v, "' has categorical-like structure (small-range integer ",
+          "or labelled values) but is entering the model as continuous. ",
+          "If continuous treatment is intended (e.g. a Likert scale), no ",
+          "action is needed. If categorical treatment was intended, ",
+          "either register with jdummy(", .jst_data_name, ", ", v,
+          ") before running jlm(), or pass categorical = \"", v,
+          "\" on this call.",
+          call. = FALSE
+        )
+      }
     }
   }
 
@@ -8069,44 +8094,43 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
   }
 }
 
-#' Internal helper: classify a variable as categorical or numeric
+#' Internal helper: intent-based categorical classifier
 #'
-#' Unified classifier used across the package (jplot, jlm, jlogistic, jdesc,
-#' jscreen, jcorr, and any other function that needs to distinguish
-#' categorical from continuous variables). The rule is specified in the
-#' "Categorical classification rules" section of the package changelog.
+#' Returns TRUE only when the user has explicitly signalled that a variable
+#' should be treated as categorical. This helper answers the question
+#' "should this variable be behaviourally treated as categorical?" — for
+#' decisions like factoring in regression, expanding to dummies, or
+#' excluding from a correlation matrix.
 #'
-#' Per-call overrides (\code{numeric = "Var"} / \code{categorical = "Var"})
-#' are handled by the calling function before reaching this helper. This
-#' function implements rules 3-7 only:
+#' Paired with \code{.jst_is_discrete_integer()} (the structural helper).
+#' Callers needing behavioural decisions use this helper; callers needing
+#' a warning trigger typically check this helper first, and fall back to
+#' the structural helper only if this one returns FALSE.
+#'
+#' Rules (first match wins):
 #'
 #' \enumerate{
 #'   \item jdummy() registration for \code{var_name} on \code{data_name}
 #'         -> categorical.
 #'   \item Class factor, logical, or character -> categorical.
-#'   \item haven_labelled (including haven_labelled_spss) with value labels
-#'         attached to at least one non-missing value present in the data
-#'         -> categorical.
-#'   \item Plain numeric (or haven_labelled numeric that fell through 3)
-#'         with all whole-number values, min >= 0, max < 6, and at least 2
-#'         unique non-NA values -> categorical.
-#'   \item Otherwise -> continuous.
+#'   \item Otherwise -> FALSE.
 #' }
 #'
-#' NA preprocessing (auto-conversion of values labelled "Missing" to NA) is
-#' expected to have run already via \code{.jst_apply_pipeline()} before this
-#' helper is called on analysis data.
+#' NA preprocessing is expected to have run already via
+#' \code{.jst_apply_pipeline()} before this helper is called on analysis
+#' data, though neither rule depends on NA state.
 #'
 #' @param x A variable (vector).
 #' @param var_name Optional character string. The variable's column name.
 #'   Required for the jdummy() registration check.
 #' @param data_name Optional character string. The data frame's name.
 #'   Required for the jdummy() registration check.
-#' @return TRUE if categorical, FALSE if continuous.
+#' @return TRUE if the user has declared the variable categorical,
+#'   FALSE otherwise.
 #' @keywords internal
 .jst_is_categorical <- function(x, var_name = NULL, data_name = NULL) {
 
-  # -- Rule 3: jdummy() registration ----------------------------------------
+  # -- Rule A: jdummy() registration ---------------------------------------
   if (!is.null(var_name) && !is.null(data_name)) {
     dummy_regs <- .jst_get_dummy(data_name)
     if (!is.null(dummy_regs) && length(dummy_regs) > 0) {
@@ -8117,10 +8141,63 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
     }
   }
 
-  # -- Rule 4: factor, logical, character -----------------------------------
+  # -- Rule B: factor, logical, character ----------------------------------
   if (is.factor(x) || is.logical(x) || is.character(x)) return(TRUE)
 
-  # -- Rule 5: haven_labelled with non-missing value labels -----------------
+  FALSE
+}
+
+
+#' Internal helper: structural categorical-looking classifier
+#'
+#' Returns TRUE when a variable's shape suggests it *could* be categorical
+#' but has not been explicitly declared as such via jdummy() or a per-call
+#' override. This helper answers a different question from
+#' \code{.jst_is_categorical()}: it describes the structure of the values,
+#' not the user's intent.
+#'
+#' Used primarily as a *warning trigger*: callers that want to alert users
+#' to "this looks like it should probably have been jdummy-registered or
+#' passed via categorical=" check this helper. It does NOT license
+#' behavioural changes — analysis functions should only factor variables
+#' based on the intent helper, not this one.
+#'
+#' Two structural rules, checked in order. First match wins.
+#'
+#' \enumerate{
+#'   \item haven_labelled (including haven_labelled_spss) with value labels
+#'         attached to at least one non-missing value present in the data
+#'         -> TRUE. Character-type labelled vectors return TRUE immediately;
+#'         numeric labelled vectors require at least one labelled code to
+#'         actually appear in the (post-NA-preprocessing) data.
+#'   \item Plain numeric (or haven_labelled numeric that fell through 1)
+#'         with all whole-number values, min >= 0, max <= 6, and at least
+#'         2 unique non-NA values -> TRUE.
+#' }
+#'
+#' Bounds on Rule 2 (0 to 6 inclusive) support the common view that an
+#' interval-like variable with 6+ categories is adequately continuous for
+#' linear-model use. 7-category Likert coded as 0-6 or 1-6 still triggers
+#' the warning; coded as 1-7 does not.
+#'
+#' NA preprocessing (auto-conversion of values labelled "Missing" to NA)
+#' is expected to have run already via \code{.jst_apply_pipeline()} before
+#' this helper is called on analysis data. Rule 1's "labelled codes
+#' present in data" check depends on this ordering.
+#'
+#' @param x A variable (vector).
+#' @param var_name Optional character string. The variable's column name.
+#'   Accepted for call-site symmetry with \code{.jst_is_categorical()};
+#'   not currently used in this helper's logic.
+#' @param data_name Optional character string. The data frame's name.
+#'   Accepted for call-site symmetry with \code{.jst_is_categorical()};
+#'   not currently used in this helper's logic.
+#' @return TRUE if the variable has categorical-like structure,
+#'   FALSE otherwise.
+#' @keywords internal
+.jst_is_discrete_integer <- function(x, var_name = NULL, data_name = NULL) {
+
+  # -- Rule 1: haven_labelled with non-missing value labels ----------------
   if (haven::is.labelled(x)) {
     val_labs <- labelled::val_labels(x)
     if (!is.null(val_labs) && length(val_labs) > 0) {
@@ -8132,16 +8209,16 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
       # in the (post-NA-preprocessing) data. This prevents a continuous
       # variable with only a "Missing" label from misclassifying as
       # categorical once the missing values have been NA'd out.
-      x_num        <- suppressWarnings(as.numeric(x))
-      non_na_vals  <- x_num[!is.na(x_num)]
+      x_num       <- suppressWarnings(as.numeric(x))
+      non_na_vals <- x_num[!is.na(x_num)]
       if (length(non_na_vals) > 0 && any(val_labs %in% non_na_vals)) {
         return(TRUE)
       }
-      # Fall through to Rule 6 if no labelled codes remain in the data.
+      # Fall through to Rule 2 if no labelled codes remain in the data.
     }
   }
 
-  # -- Rule 6: whole-number non-negative range fallback ---------------------
+  # -- Rule 2: whole-number 0-6 range --------------------------------------
   if (is.numeric(x) || haven::is.labelled(x)) {
     x_num   <- suppressWarnings(as.numeric(x))
     x_clean <- x_num[!is.na(x_num)]
@@ -8150,13 +8227,12 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
       if (length(unique_vals) >= 2 &&
           all(x_clean == floor(x_clean)) &&
           min(x_clean) >= 0 &&
-          max(x_clean) <  6) {
+          max(x_clean) <= 6) {
         return(TRUE)
       }
     }
   }
 
-  # -- Rule 7: otherwise continuous -----------------------------------------
   FALSE
 }
 
