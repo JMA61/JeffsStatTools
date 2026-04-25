@@ -3857,6 +3857,90 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE,
   auto_ref_cats <- character(0)
   dv_name <- all.vars(formula)[1]
 
+  # --- DV sanity check: warn if the DV looks categorical or dichotomous ----
+  #
+  # jlm runs linear regression, which treats the DV as continuous. If the
+  # DV looks like a dichotomy or has small-integer categorical-like
+  # structure, the user may have meant a different model. Warn but don't
+  # stop — the user might genuinely want continuous treatment of a
+  # 0/1-coded variable, for example, which is mathematically valid.
+  dv_dich <- .jst_is_dichotomy(data[[dv_name]])
+  if (dv_dich$is_dichotomy) {
+    # Dichotomy-specific warning: jlogistic is the most likely intended
+    # alternative. Coding-specific recode hint when not 0/1.
+    base_msg <- paste0(
+      "'", dv_name, "' is a dichotomy (coded ", dv_dich$coding,
+      ") but is being used as the dependent variable in linear regression. ",
+      "Linear regression treats the DV as continuous, which may not be ",
+      "what you intended. Consider whether you meant: (a) reverse the ",
+      "variables in the formula, e.g. jlm(", all.vars(formula)[2], " ~ ",
+      dv_name
+    )
+    # Build full reversed-formula suggestion if more than one IV
+    other_ivs <- all.vars(formula)[-1]
+    if (length(other_ivs) > 1) {
+      base_msg <- paste0(base_msg, " + ", paste(other_ivs[-1], collapse = " + "))
+    }
+    base_msg <- paste0(base_msg, ", ", .jst_data_name, "); or ")
+    if (dv_dich$coding == "0/1") {
+      tail_msg <- paste0(
+        "(b) use jlogistic(", deparse(formula), ", ", .jst_data_name,
+        ") for binary outcomes."
+      )
+    } else if (dv_dich$coding == "1/2") {
+      tail_msg <- paste0(
+        "(b) recode 1/2 to 0/1 with jrecode() and use jlogistic() for ",
+        "binary outcomes."
+      )
+    } else {
+      tail_msg <- paste0(
+        "(b) recode to 0/1 with jrecode() and use jlogistic() for binary ",
+        "outcomes."
+      )
+    }
+    warning(base_msg, tail_msg, call. = FALSE)
+  } else if (.jst_is_count(data[[dv_name]])) {
+    # Count DV: small-range non-negative integer starting at 0. Linear
+    # regression assumptions (normal residuals, constant variance) are
+    # usually violated by small counts. The package does not yet have
+    # count-model functions; for now, warn and let the model run.
+    n_unique <- length(unique(data[[dv_name]][!is.na(data[[dv_name]])]))
+    warning(
+      "'", dv_name, "' looks like a count variable (non-negative integer ",
+      "in the 0-6 range, ", n_unique, " unique values). Linear regression ",
+      "assumes a continuous DV with at least 6-7 distinct values for ",
+      "reliable inference. With small-range counts, the linear-regression ",
+      "assumptions of normally distributed residuals and constant variance ",
+      "are usually violated. Consider whether to (a) collapse '", dv_name,
+      "' into broader categories and treat it as ordinal, or (b) wait ",
+      "for count-model functions in a future package version (Poisson or ",
+      "negative binomial regression). The model will run, but interpret ",
+      "with caution.",
+      call. = FALSE
+    )
+  } else if (.jst_is_discrete_integer(data[[dv_name]], dv_name,
+                                      .jst_data_name)) {
+    # Non-dichotomous but categorical-like (e.g. a Likert item used as DV).
+    # Three plausible alternatives: reverse formula, jlogistic (multinomial
+    # would apply but that's beyond current package scope), or jaov/jt.
+    other_ivs <- all.vars(formula)[-1]
+    reverse_formula <- paste0(other_ivs[1], " ~ ", dv_name)
+    if (length(other_ivs) > 1) {
+      reverse_formula <- paste0(reverse_formula, " + ",
+                                paste(other_ivs[-1], collapse = " + "))
+    }
+    warning(
+      "'", dv_name, "' is the dependent variable but has categorical-like ",
+      "structure (small-range integer or labelled values). Linear ",
+      "regression treats this as continuous, which may not be what you ",
+      "intended. Consider whether you meant to: (a) reverse the variables ",
+      "in the formula, e.g. jlm(", reverse_formula, ", ", .jst_data_name,
+      "); (b) use jlogistic() if the DV is a binary outcome; or ",
+      "(c) use jaov() or jt() to compare the IV across DV groups.",
+      call. = FALSE
+    )
+  }
+
   # Validate override arguments against model variables
   iv_names <- setdiff(model_vars, c(dv_name, dummy_coef_names))
   # Also exclude original variable names that were expanded by jdummy()
@@ -3895,15 +3979,43 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE,
     }
   }
 
+  # Handle both cases for numeric / categorical arguments:
+  #
+  #   - Dummy-registered variable (name listed in expanded_originals):
+  #       `categorical = "X"` → redundant with jdummy, warning, continue.
+  #       `numeric = "X"`     → jdummy wins regardless, argument is ignored;
+  #                             tailored warning explaining how to undo the
+  #                             registration. Model still runs with the
+  #                             dummy-expanded variable.
+  #   - Unknown variable (not in expanded_originals, not in iv_names):
+  #       Genuine typo or name that isn't in the formula. Stop with an
+  #       error rather than silently running a model that ignores the
+  #       user's stated intent.
+
   if (!is.null(numeric)) {
     bad <- setdiff(numeric, iv_names)
     if (length(bad) > 0) {
-      warning(
-        "numeric argument: ",
-        paste0("'", bad, "'", collapse = ", "),
-        " not found among independent variables (ignoring).",
-        call. = FALSE
-      )
+      bad_registered <- intersect(bad, expanded_originals)
+      bad_unknown    <- setdiff(bad, expanded_originals)
+      if (length(bad_registered) > 0) {
+        warning(
+          "numeric argument ",
+          paste0("'", bad_registered, "'", collapse = ", "),
+          " is ignored: already registered as a dummy variable via ",
+          "jdummy(), which takes precedence. To model as continuous, ",
+          "first clear the registration with: jdummy(NULL)",
+          call. = FALSE
+        )
+      }
+      if (length(bad_unknown) > 0) {
+        stop(
+          "numeric argument: ",
+          paste0("'", bad_unknown, "'", collapse = ", "),
+          " not found among independent variables in ", .jst_data_name,
+          ". Check for typos.",
+          call. = FALSE
+        )
+      }
       numeric <- intersect(numeric, iv_names)
     }
   }
@@ -3911,12 +4023,26 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE,
   if (!is.null(categorical)) {
     bad <- setdiff(categorical, iv_names)
     if (length(bad) > 0) {
-      warning(
-        "categorical argument: ",
-        paste0("'", bad, "'", collapse = ", "),
-        " not found among independent variables (ignoring).",
-        call. = FALSE
-      )
+      bad_registered <- intersect(bad, expanded_originals)
+      bad_unknown    <- setdiff(bad, expanded_originals)
+      if (length(bad_registered) > 0) {
+        warning(
+          "categorical argument ",
+          paste0("'", bad_registered, "'", collapse = ", "),
+          " is redundant: already registered as a dummy variable via ",
+          "jdummy(), so categorical treatment is automatic. Ignoring.",
+          call. = FALSE
+        )
+      }
+      if (length(bad_unknown) > 0) {
+        stop(
+          "categorical argument: ",
+          paste0("'", bad_unknown, "'", collapse = ", "),
+          " not found among independent variables in ", .jst_data_name,
+          ". Check for typos.",
+          call. = FALSE
+        )
+      }
       categorical <- intersect(categorical, iv_names)
     }
   }
@@ -3990,21 +4116,50 @@ jlm <- function(formula, data, subset = NULL, labels = TRUE,
       auto_ref_cats <- c(auto_ref_cats, paste0(v, " = ", ref_level))
     } else {
       # Not intent-categorical. Strip haven class if present, leave as
-      # numeric in the model. If the variable has categorical-like
-      # structure, emit an informational warning so the user can confirm
-      # the choice.
+      # numeric in the model.
       if (haven::is.labelled(data[[v]])) {
         data[[v]] <- as.numeric(data[[v]])
       }
-      if (.jst_is_discrete_integer(data[[v]], v, .jst_data_name)) {
+      # Check for dichotomy first: dichotomies are valid as numeric IVs
+      # in linear regression (the slope is the mean difference). They do
+      # not need dummy-coding. The discrete-integer warning would be
+      # misleading for them. Soft coding-specific warnings only:
+      #   - 0/1, factor, character, logical: no warning, clean run.
+      #   - 1/2: model runs correctly, but recoding to 0/1 makes the
+      #     intercept easier to interpret.
+      #   - other (e.g., 5/10): non-standard coding; slope represents
+      #     per-unit change, recoding to 0/1 advised.
+      iv_dich <- .jst_is_dichotomy(data[[v]])
+      if (iv_dich$is_dichotomy) {
+        if (iv_dich$coding == "1/2") {
+          warning(
+            "'", v, "' is a 1/2 dichotomy. The model runs correctly, but ",
+            "recoding to 0/1 with jrecode() makes the intercept easier to ",
+            "interpret.",
+            call. = FALSE
+          )
+        } else if (iv_dich$coding == "other") {
+          warning(
+            "'", v, "' is a dichotomy with non-standard coding. The slope ",
+            "represents per-unit change rather than the contrast between ",
+            "categories. Consider recoding to 0/1 with jrecode() for ",
+            "clearer interpretation.",
+            call. = FALSE
+          )
+        }
+        # 0/1, factor, character, logical: no warning.
+      } else if (.jst_is_discrete_integer(data[[v]], v, .jst_data_name)) {
+        # Non-dichotomous but categorical-like structure: emit the
+        # informational warning so the user can confirm continuous
+        # treatment or switch to categorical.
         warning(
           "'", v, "' has categorical-like structure (small-range integer ",
           "or labelled values) but is entering the model as continuous. ",
           "If continuous treatment is intended (e.g. a Likert scale), no ",
-          "action is needed. If categorical treatment was intended, ",
-          "either register with jdummy(", .jst_data_name, ", ", v,
-          ") before running jlm(), or pass categorical = \"", v,
-          "\" on this call.",
+          "action is needed. If categorical treatment was intended, either ",
+          "(a) register with: jdummy(", .jst_data_name, ", ", v,
+          ") before running jlm(), or (b) use: jlm(", deparse(formula),
+          ", ", .jst_data_name, ", categorical = \"", v, "\")",
           call. = FALSE
         )
       }
@@ -8166,19 +8321,24 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
 #'
 #' \enumerate{
 #'   \item haven_labelled (including haven_labelled_spss) with value labels
-#'         attached to at least one non-missing value present in the data
-#'         -> TRUE. Character-type labelled vectors return TRUE immediately;
-#'         numeric labelled vectors require at least one labelled code to
-#'         actually appear in the (post-NA-preprocessing) data.
+#'         attached to at least one non-missing value present in the data,
+#'         AND <= 6 unique non-NA values overall -> TRUE. Character-type
+#'         labelled vectors return TRUE immediately. Numeric labelled
+#'         vectors require BOTH that at least one labelled code actually
+#'         appears in the (post-NA-preprocessing) data AND that there are
+#'         no more than 6 distinct values present (variables with 7+
+#'         distinct values have enough categories that linear-model
+#'         assumptions hold reasonably well).
 #'   \item Plain numeric (or haven_labelled numeric that fell through 1)
 #'         with all whole-number values, min >= 0, max <= 6, and at least
 #'         2 unique non-NA values -> TRUE.
 #' }
 #'
-#' Bounds on Rule 2 (0 to 6 inclusive) support the common view that an
-#' interval-like variable with 6+ categories is adequately continuous for
-#' linear-model use. 7-category Likert coded as 0-6 or 1-6 still triggers
-#' the warning; coded as 1-7 does not.
+#' Bounds on both rules (0 to 6 inclusive) support the common view that
+#' an interval-like variable with 6+ categories is adequately continuous
+#' for linear-model use. 7-category Likert coded as 0-6 or 1-6 still
+#' triggers the warning; coded as 1-7 does not. A 10-category labelled
+#' Income variable falls through both rules and is treated as continuous.
 #'
 #' NA preprocessing (auto-conversion of values labelled "Missing" to NA)
 #' is expected to have run already via \code{.jst_apply_pipeline()} before
@@ -8198,6 +8358,11 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
 .jst_is_discrete_integer <- function(x, var_name = NULL, data_name = NULL) {
 
   # -- Rule 1: haven_labelled with non-missing value labels ----------------
+  # Require at most 6 unique non-NA values present in the data. Variables
+  # with 7+ distinct values have enough categories that linear-regression
+  # assumptions hold reasonably well (the 6-7 minimum convention for
+  # interval-like DVs), so we do not flag them as categorical-like even
+  # if they came in with value labels attached.
   if (haven::is.labelled(x)) {
     val_labs <- labelled::val_labels(x)
     if (!is.null(val_labs) && length(val_labs) > 0) {
@@ -8206,15 +8371,21 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
         return(TRUE)
       }
       # Numeric-labelled: require at least one labelled code to be present
-      # in the (post-NA-preprocessing) data. This prevents a continuous
+      # in the (post-NA-preprocessing) data, AND require <= 6 unique
+      # non-NA values overall. The first check prevents a continuous
       # variable with only a "Missing" label from misclassifying as
-      # categorical once the missing values have been NA'd out.
+      # categorical once the missing values have been NA'd out. The
+      # second check prevents large-N labelled variables (e.g., Income
+      # with 10 broad categories) from being flagged.
       x_num       <- suppressWarnings(as.numeric(x))
       non_na_vals <- x_num[!is.na(x_num)]
-      if (length(non_na_vals) > 0 && any(val_labs %in% non_na_vals)) {
+      if (length(non_na_vals) > 0 &&
+          any(val_labs %in% non_na_vals) &&
+          length(unique(non_na_vals)) <= 6) {
         return(TRUE)
       }
-      # Fall through to Rule 2 if no labelled codes remain in the data.
+      # Fall through to Rule 2 if no labelled codes remain in the data,
+      # or if the variable has too many unique values to be flagged.
     }
   }
 
