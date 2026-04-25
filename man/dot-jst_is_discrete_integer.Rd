@@ -39,19 +39,24 @@ Two structural rules, checked in order. First match wins.
 
 \enumerate{
 \item haven_labelled (including haven_labelled_spss) with value labels
-attached to at least one non-missing value present in the data
--> TRUE. Character-type labelled vectors return TRUE immediately;
-numeric labelled vectors require at least one labelled code to
-actually appear in the (post-NA-preprocessing) data.
+attached to at least one non-missing value present in the data,
+AND <= 6 unique non-NA values overall -> TRUE. Character-type
+labelled vectors return TRUE immediately. Numeric labelled
+vectors require BOTH that at least one labelled code actually
+appears in the (post-NA-preprocessing) data AND that there are
+no more than 6 distinct values present (variables with 7+
+distinct values have enough categories that linear-model
+assumptions hold reasonably well).
 \item Plain numeric (or haven_labelled numeric that fell through 1)
 with all whole-number values, min >= 0, max <= 6, and at least
 2 unique non-NA values -> TRUE.
 }
 
-Bounds on Rule 2 (0 to 6 inclusive) support the common view that an
-interval-like variable with 6+ categories is adequately continuous for
-linear-model use. 7-category Likert coded as 0-6 or 1-6 still triggers
-the warning; coded as 1-7 does not.
+Bounds on both rules (0 to 6 inclusive) support the common view that
+an interval-like variable with 6+ categories is adequately continuous
+for linear-model use. 7-category Likert coded as 0-6 or 1-6 still
+triggers the warning; coded as 1-7 does not. A 10-category labelled
+Income variable falls through both rules and is treated as continuous.
 
 NA preprocessing (auto-conversion of values labelled "Missing" to NA)
 is expected to have run already via \code{.jst_apply_pipeline()} before

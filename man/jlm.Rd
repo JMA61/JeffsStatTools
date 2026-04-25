@@ -109,8 +109,11 @@ labels (or plain numeric variables) to be treated as categorical
 }
 }
 \examples{
-# With explicit data frame
+# With explicit data frame (named argument)
 jlm(mpg ~ hp + wt, data = mtcars)
+
+# With explicit data frame (positional argument)
+jlm(mpg ~ hp + wt, mtcars)
 
 # Using juse() default
 juse(mtcars)

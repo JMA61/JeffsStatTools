@@ -618,15 +618,55 @@
 
 #' Internal helper: check that variable names exist in a data frame
 #'
-#' Produces a clear error message listing any variables not found,
-#' so students see helpful feedback instead of cryptic internal error traces.
+#' Produces clear error messages for several common user mistakes:
+#'   - data passed as a character string (quoted dataset name)
+#'   - data NULL
+#'   - data is a matrix (needs as.data.frame())
+#'   - data is some other non-data-frame object
+#'   - data is a valid data frame, but the variable names don't appear in it
+#'
+#' Without these tailored messages, a string or other non-data-frame value
+#' for `data` would fall through to the variable-name check and produce a
+#' misleading "Variable(s) not found" error pointing at the variables
+#' rather than at the real problem (the data argument itself).
 #'
 #' @keywords internal
 .jst_check_vars <- function(data, var_names, data_name = NULL) {
+
+  # -- First: confirm `data` is actually a data frame ----------------------
+  if (!is.data.frame(data)) {
+    if (is.character(data) && length(data) == 1) {
+      stop(paste0(
+        "'", data, "' (passed as a character string) is not a data frame. ",
+        "Remove the quotes - e.g., ", data, " instead of \"", data, "\"."
+      ), call. = FALSE)
+    }
+    if (is.null(data)) {
+      stop(paste0(
+        "data = NULL: no data frame supplied. Pass a data frame as the ",
+        "data argument, or set a default with juse() first."
+      ), call. = FALSE)
+    }
+    if (is.matrix(data)) {
+      label <- if (!is.null(data_name)) data_name else "data"
+      stop(paste0(
+        "'", label, "' is a matrix, not a data frame. ",
+        "Convert it first with: as.data.frame(", label, ")"
+      ), call. = FALSE)
+    }
+    # Catch-all: non-data-frame R object of some other type.
+    label <- if (!is.null(data_name)) data_name else "data"
+    stop(paste0(
+      "'", label, "' is a ", class(data)[1], " object, not a data frame. ",
+      "The data argument requires a data frame."
+    ), call. = FALSE)
+  }
+
+  # -- Then: confirm the requested variables exist in the data frame -------
   missing_vars <- var_names[!var_names %in% names(data)]
   if (length(missing_vars) > 0) {
     df_label <- if (!is.null(data_name)) {
-      paste0("'", data_name, "'")
+      data_name
     } else {
       "the data frame"
     }
@@ -684,13 +724,13 @@
          call. = FALSE)
   }
   if (!exists(data_name, envir = envir)) {
-    stop(paste0("Default data frame '", data_name,
-                "' not found. It may have been removed or renamed."),
+    stop(paste0("Default data frame ", data_name,
+                " not found. It may have been removed or renamed."),
          call. = FALSE)
   }
   data <- get(data_name, envir = envir)
   if (!is.data.frame(data)) {
-    stop(paste0("'", data_name, "' is not a data frame."), call. = FALSE)
+    stop(paste0(data_name, " is not a data frame."), call. = FALSE)
   }
   list(data = data, name = data_name)
 }
@@ -1071,10 +1111,10 @@ juse <- function(data) {
   # Check it exists and is a data frame
   calling_env <- parent.frame()
   if (!exists(data_name, envir = calling_env)) {
-    stop(paste0("'", data_name, "' not found."), call. = FALSE)
+    stop(paste0(data_name, " not found."), call. = FALSE)
   }
   if (!is.data.frame(get(data_name, envir = calling_env))) {
-    stop(paste0("'", data_name, "' is not a data frame."), call. = FALSE)
+    stop(paste0(data_name, " is not a data frame."), call. = FALSE)
   }
 
   options(.jst_default_data = data_name)
@@ -3762,8 +3802,11 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = TRUE) {
 #'   }
 #'
 #' @examples
-#' # With explicit data frame
+#' # With explicit data frame (named argument)
 #' jlm(mpg ~ hp + wt, data = mtcars)
+#'
+#' # With explicit data frame (positional argument)
+#' jlm(mpg ~ hp + wt, mtcars)
 #'
 #' # Using juse() default
 #' juse(mtcars)
@@ -8405,6 +8448,154 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
   }
 
   FALSE
+}
+
+
+#' Internal helper: dichotomy classifier
+#'
+#' Returns information about whether a variable is a two-value (dichotomous)
+#' variable, and if so, what coding it uses. Designed to be the single
+#' source of truth across the package for "is this a dichotomy?" questions
+#' — used by jlm DV checks, by jlogistic DV validation, and (in the
+#' future) by jcorr inclusion decisions for point-biserial correlations.
+#'
+#' Detects dichotomies in any of these forms:
+#' \itemize{
+#'   \item Numeric (or haven_labelled numeric) with exactly two unique
+#'         non-NA values: classified by coding pattern as "0/1", "1/2",
+#'         or "other" (e.g. 5/10, -1/1).
+#'   \item Factor with exactly two levels: classified as "factor".
+#'   \item Character with exactly two unique non-NA values: classified
+#'         as "character".
+#'   \item Logical with both TRUE and FALSE present: classified as
+#'         "logical".
+#' }
+#'
+#' Returns a list with two named elements so callers can both detect
+#' dichotomies and react to specific codings without redoing the work:
+#' \itemize{
+#'   \item \code{is_dichotomy}: TRUE if the variable has exactly two
+#'         non-NA distinct values, FALSE otherwise.
+#'   \item \code{coding}: One of "0/1", "1/2", "other", "factor",
+#'         "character", "logical" when \code{is_dichotomy} is TRUE;
+#'         \code{NA_character_} otherwise.
+#' }
+#'
+#' Why a list rather than two helpers: most callers want both pieces of
+#' information at the same time (e.g. jlogistic asks both "is this a
+#' dichotomy?" and "what coding?" to decide on its error message). One
+#' helper that returns both avoids duplicating detection work and
+#' eliminates the risk of two helpers giving inconsistent answers if
+#' they're modified independently later.
+#'
+#' This helper makes no judgement about whether dichotomous treatment
+#' is appropriate — that's up to the caller. jlogistic uses it to
+#' validate the DV (and stops if not coded 0/1); the new jlm DV check
+#' uses it to warn that a different model might have been intended;
+#' future jcorr could use it to decide which correlation method to use.
+#'
+#' @param x A variable (vector).
+#' @return A list with elements \code{is_dichotomy} (logical) and
+#'   \code{coding} (character or NA).
+#' @keywords internal
+.jst_is_dichotomy <- function(x) {
+
+  na_result <- list(is_dichotomy = FALSE, coding = NA_character_)
+
+  # -- Logical: TRUE/FALSE -------------------------------------------------
+  if (is.logical(x)) {
+    vals <- unique(x[!is.na(x)])
+    if (length(vals) == 2) return(list(is_dichotomy = TRUE, coding = "logical"))
+    return(na_result)
+  }
+
+  # -- Factor: two levels --------------------------------------------------
+  if (is.factor(x)) {
+    if (nlevels(x) == 2) return(list(is_dichotomy = TRUE, coding = "factor"))
+    return(na_result)
+  }
+
+  # -- Character: two unique non-NA values ---------------------------------
+  if (is.character(x)) {
+    vals <- unique(x[!is.na(x)])
+    if (length(vals) == 2) return(list(is_dichotomy = TRUE, coding = "character"))
+    return(na_result)
+  }
+
+  # -- Numeric or haven_labelled numeric: classify by coding pattern -------
+  if (is.numeric(x) || haven::is.labelled(x)) {
+    vals <- suppressWarnings(as.numeric(x))
+    vals <- vals[!is.na(vals)]
+    unique_vals <- sort(unique(vals))
+    if (length(unique_vals) != 2) return(na_result)
+    coding <- if (identical(unique_vals, c(0, 1))) {
+                "0/1"
+              } else if (identical(unique_vals, c(1, 2))) {
+                "1/2"
+              } else {
+                "other"
+              }
+    return(list(is_dichotomy = TRUE, coding = coding))
+  }
+
+  na_result
+}
+
+
+#' Internal helper: count-variable classifier
+#'
+#' Returns TRUE when a variable's values fit the structural pattern of a
+#' small-range count: non-negative whole numbers in the 0-6 range, with
+#' no value labels attached, and not a dichotomy (which has its own
+#' helper).
+#'
+#' Used as a *warning trigger* for analyses that assume a continuous DV
+#' with at least 6-7 distinct values for reliable inference. The jlm DV
+#' check uses it to warn that linear regression's assumptions (normally
+#' distributed residuals, constant variance) are usually violated by
+#' small-range counts. A future jpoisson()/jnegbin() workflow would be
+#' the appropriate response when count regression is implemented; for
+#' now the warning explains the limitation.
+#'
+#' This helper deliberately uses the same range rules as
+#' .jst_is_discrete_integer() (min >= 0, max <= 6, all whole numbers).
+#' The only structural difference is the "not haven-labelled" rule:
+#' counts in this package are typically plain integers, while labelled
+#' small-range integers are usually Likert items or category codes
+#' rather than counts. Both helpers can return TRUE for the same
+#' variable (e.g., an unlabelled small-range count fires both); the
+#' calling function decides how to handle that overlap. For example,
+#' the jlm DV check examines counts before discrete-integers so that
+#' an unlabelled count gets the count-specific warning rather than the
+#' more general categorical-like one.
+#'
+#' Detection criteria, all required:
+#' \itemize{
+#'   \item is.numeric and not haven_labelled
+#'   \item not a dichotomy (.jst_is_dichotomy() handles the binary case)
+#'   \item all values are whole numbers (integer-valued)
+#'   \item minimum value >= 0
+#'   \item maximum value <= 6
+#'   \item at least 2 non-NA values
+#' }
+#'
+#' @param x A variable (vector).
+#' @return TRUE if the variable looks like a small-range count, FALSE
+#'   otherwise.
+#' @keywords internal
+.jst_is_count <- function(x) {
+
+  if (haven::is.labelled(x))   return(FALSE)
+  if (!is.numeric(x))          return(FALSE)
+  if (.jst_is_dichotomy(x)$is_dichotomy) return(FALSE)
+
+  vals <- x[!is.na(x)]
+  if (length(vals) < 2)        return(FALSE)
+  if (!all(vals == floor(vals))) return(FALSE)
+  if (min(vals) < 0)           return(FALSE)
+  if (max(vals) > 6)           return(FALSE)
+
+  TRUE
 }
 
 

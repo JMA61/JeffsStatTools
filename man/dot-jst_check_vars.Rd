@@ -7,7 +7,19 @@
 .jst_check_vars(data, var_names, data_name = NULL)
 }
 \description{
-Produces a clear error message listing any variables not found,
-so students see helpful feedback instead of cryptic internal error traces.
+Produces clear error messages for several common user mistakes:
+\itemize{
+\item data passed as a character string (quoted dataset name)
+\item data NULL
+\item data is a matrix (needs as.data.frame())
+\item data is some other non-data-frame object
+\item data is a valid data frame, but the variable names don't appear in it
+}
+}
+\details{
+Without these tailored messages, a string or other non-data-frame value
+for \code{data} would fall through to the variable-name check and produce a
+misleading "Variable(s) not found" error pointing at the variables
+rather than at the real problem (the data argument itself).
 }
 \keyword{internal}
