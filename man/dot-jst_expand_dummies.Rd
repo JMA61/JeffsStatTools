@@ -19,7 +19,7 @@ A list with components:
 \item{data}{The data frame with dummy columns added.}
 \item{formula}{The updated formula with dummy names.}
 \item{ref_cats}{Character vector of "VarName = RefLabel" strings.}
-\item{dummy_coef_names}{Character vector of dummy column names (for blanking Std B).}
+\item{dummy_coef_names}{Character vector of dummy column names (for blanking β).}
 }
 }
 \description{

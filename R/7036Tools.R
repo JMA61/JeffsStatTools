@@ -373,7 +373,7 @@
 #'     \item{data}{The data frame with dummy columns added.}
 #'     \item{formula}{The updated formula with dummy names.}
 #'     \item{ref_cats}{Character vector of "VarName = RefLabel" strings.}
-#'     \item{dummy_coef_names}{Character vector of dummy column names (for blanking Std B).}
+#'     \item{dummy_coef_names}{Character vector of dummy column names (for blanking β).}
 #'   }
 #'
 #' @keywords internal
@@ -5189,7 +5189,7 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = TRUE) {
 #'
 #' Fits a linear model using \code{stats::lm()} and prints SPSS-style output,
 #' including unstandardised coefficients, standard errors, t values, p values,
-#' and standardised coefficients ("Std B"). Standardised coefficients are left
+#' and standardised coefficients (β). Standardised coefficients are left
 #' blank for the intercept and for dummy-coded categorical terms.
 #'
 #' Also prints key model summary information (R-squared, adjusted R-squared,
@@ -5820,7 +5820,7 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
     }
   }
 
-  # Blank Std B for registered dummy variables
+  # Blank β for registered dummy variables
   if (length(dummy_coef_names) > 0) {
     for (dname in dummy_coef_names) {
       if (dname %in% names(std_b)) std_b[dname] <- NA_real_
@@ -5841,7 +5841,7 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
     b       = fmt3(coefs$b),
     StdErr  = fmt3(coefs$StdErr),
     t       = fmt3(coefs$t),
-    `Std B` = ifelse(is.na(std_b), "", sprintf("%.3f", as.numeric(std_b))),
+    Beta    = ifelse(is.na(std_b), "", sprintf("%.3f", as.numeric(std_b))),
     P       = p_fmt,
     stringsAsFactors = FALSE,
     row.names = rownames(coefs)
@@ -5870,7 +5870,7 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
 
   cat("\nCoefficients:\n")
   .jst_print_table(out_coefs,
-                   col.names = c("B", "SE", "t", "Std B", "p"),
+                   col.names = c("b", "SE", "t", "\u03b2", "p"),
                    row.names = TRUE)
 
   cat("\nR-squared: ", sprintf("%.3f", r_squared),
@@ -6397,7 +6397,7 @@ jlogistic <- function(formula, data, subset = NULL, labels = TRUE,
 
   # -- Coefficients table ----------------------------------------------------
   coefs    <- as.data.frame(model_summary$coefficients, stringsAsFactors = FALSE)
-  colnames(coefs) <- c("B", "SE", "z", "P")
+  colnames(coefs) <- c("b", "SE", "z", "P")
 
   # Wald chi-square = z^2
   wald <- coefs$z^2
@@ -6406,7 +6406,7 @@ jlogistic <- function(formula, data, subset = NULL, labels = TRUE,
   p_fmt <- ifelse(!is.na(p_num) & p_num < 0.001, "<.001",
                   ifelse(is.na(p_num), "<.001", sprintf("%.3f", p_num)))
 
-  exp_b <- exp(coefs$B)
+  exp_b <- exp(coefs$b)
 
   fmt3 <- function(x) sprintf("%.3f", as.numeric(x))
 
@@ -6415,7 +6415,7 @@ jlogistic <- function(formula, data, subset = NULL, labels = TRUE,
                                             all.vars(formula)[-1])
 
   out_coefs <- data.frame(
-    B      = fmt3(coefs$B),
+    b      = fmt3(coefs$b),
     SE     = fmt3(coefs$SE),
     Wald   = fmt3(wald),
     df     = rep("1", nrow(coefs)),
@@ -6425,7 +6425,7 @@ jlogistic <- function(formula, data, subset = NULL, labels = TRUE,
     row.names = rownames(coefs)
   )
 
-  col_names <- c("B", "SE", "Wald", "df", "p", "Exp(B)")
+  col_names <- c("b", "SE", "Wald", "df", "p", "Exp(B)")
 
   if (ci) {
     ci_vals <- suppressMessages(stats::confint(model))

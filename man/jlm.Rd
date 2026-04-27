@@ -76,7 +76,7 @@ variables in the model.}
 \description{
 Fits a linear model using \code{stats::lm()} and prints SPSS-style output,
 including unstandardised coefficients, standard errors, t values, p values,
-and standardised coefficients ("Std B"). Standardised coefficients are left
+and standardised coefficients (β). Standardised coefficients are left
 blank for the intercept and for dummy-coded categorical terms.
 }
 \details{
