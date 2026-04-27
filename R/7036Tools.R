@@ -2290,6 +2290,80 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
   var_name <- deparse(substitute(var))
   .jst_check_vars(data, var_name, .jst_data_name)
 
+  # -- jdummy(, var, show = ...) on already-registered var: display only ----
+  # If the user calls jdummy() naming an already-registered variable and
+  # passes show = ... but does NOT pass ref = ..., treat the call as a
+  # display-only request. This prevents accidentally clobbering a non-
+  # default reference when the user just wants to inspect the existing
+  # registration with the structural-table view.
+  if (!identical(show, FALSE) && missing(ref) && !remove) {
+    ds <- .jst_get_dummy(.jst_data_name)
+    if (!is.null(ds)) {
+      existing_idx <- which(vapply(ds, function(r) r$var_name == var_name,
+                                   logical(1)))
+      if (length(existing_idx) > 0) {
+        reg <- ds[[existing_idx[1]]]
+
+        # Print the existing registration summary
+        .cat_red("Dummy Variable Registration\n")
+        .jst_default_note(.jst_data_name, extra_newline = TRUE)
+        cat("  Variable: ", reg$var_name, " (", reg$var_type, ")\n", sep = "")
+
+        # ref_label is stored in canonical form from the original registration
+        cat("  Reference category: ", reg$ref_label, "\n", sep = "")
+        cat("  Dummy variables: ", paste(reg$dummy_names, collapse = ", "),
+            "\n", sep = "")
+        cat("  Cases: ", reg$n_total, " (", reg$n_missing, " missing)\n",
+            sep = "")
+
+        # Show coding scheme using stored codes/labels/ref_idx
+        cat("\n  Dummy Coding Scheme:\n\n")
+        n_cats   <- length(reg$codes)
+        show_all <- is.character(show) && tolower(show) == "all"
+        n_show   <- if (show_all) n_cats else min(n_cats, 5)
+
+        all_col_names <- character(n_show)
+        for (i in seq_len(n_show)) {
+          if (i == reg$ref_idx) {
+            all_col_names[i] <- paste0(reg$labels[i], "*")
+          } else {
+            all_col_names[i] <- reg$labels[i]
+          }
+        }
+
+        row_labels <- character(n_show)
+        for (i in 1:n_show) {
+          if (i == reg$ref_idx) {
+            row_labels[i] <- paste0(reg$codes[i], ": ", reg$labels[i], "*")
+          } else {
+            row_labels[i] <- paste0(reg$codes[i], ": ", reg$labels[i])
+          }
+        }
+
+        scheme <- matrix(0L, nrow = n_show, ncol = n_show)
+        for (i in 1:n_show) scheme[i, i] <- 1L
+        scheme_df <- as.data.frame(scheme, stringsAsFactors = FALSE)
+        names(scheme_df)    <- all_col_names
+        rownames(scheme_df) <- row_labels
+
+        .jst_print_table(scheme_df,
+                         col.names = all_col_names,
+                         row.names = TRUE,
+                         indent = 4)
+
+        cat("\n    * Reference category\n")
+        if (n_cats > 5 && !show_all) {
+          cat("    (Showing first 5 of ", n_cats,
+              " categories \u2014 use show = \"all\" for complete table)\n",
+              sep = "")
+        }
+        cat("\n")
+        return(invisible(NULL))
+      }
+    }
+    # If no existing registration, fall through to register-and-display.
+  }
+
   # -- jdummy(, var, remove = TRUE) — remove one registration ----------------
   if (remove) {
     ds <- .jst_get_dummy(.jst_data_name)
@@ -2328,6 +2402,19 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
   } else {
     codes <- sort(unique(col[!is.na(col)]))
     labels_vec <- as.character(codes)
+  }
+
+  # Canonicalise labels to the underscored form used throughout the package.
+  # Replaces non-alphanumeric chars with underscores, then prepends the
+  # variable name unless the label already begins with it (haven_labelled
+  # labels often include the variable name as a prefix).
+  if (is_haven && all(nchar(labels_vec) > 0) &&
+      !all(labels_vec == as.character(codes))) {
+    cleaned <- gsub("[^A-Za-z0-9]+", "_", labels_vec)
+    already_prefixed <- startsWith(cleaned, paste0(var_name, "_"))
+    labels_vec <- ifelse(already_prefixed,
+                         cleaned,
+                         paste0(var_name, "_", cleaned))
   }
 
   n_cats    <- length(codes)
@@ -2369,8 +2456,11 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
   non_ref_idx <- setdiff(seq_len(n_cats), ref_idx)
   if (is_haven && all(nchar(labels_vec) > 0) &&
       !all(labels_vec == as.character(codes))) {
-    # Use haven labels for names
-    dummy_names <- paste0(var_name, "_", gsub("[^A-Za-z0-9]+", "_", labels_vec[non_ref_idx]))
+    # Use haven labels for names. labels_vec was canonicalised earlier
+    # (cleaned non-alphanumeric → underscore, with var-name prefix if
+    # not already present), so dummy_names is just the non-reference
+    # subset of it.
+    dummy_names <- labels_vec[non_ref_idx]
   } else {
     # Use numeric codes
     dummy_names <- paste0(var_name, "_", codes[non_ref_idx])
@@ -2407,11 +2497,13 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
   }
   .jst_set_dummy(.jst_data_name, ds)
 
-  # Print registration summary
+  # Print registration summary. ref_label is the cleaned canonical form
+  # (set during label canonicalisation above), so no further processing
+  # is needed.
   .cat_red("Dummy Variable Registration\n")
   .jst_default_note(.jst_data_name, extra_newline = TRUE)
   cat("  Variable: ", var_name, " (", var_type, ")\n", sep = "")
-  cat("  Reference category: ", ref_code, ": ", ref_label, "\n", sep = "")
+  cat("  Reference category: ", ref_label, "\n", sep = "")
   cat("  Dummy variables: ", paste(dummy_names, collapse = ", "), "\n", sep = "")
   cat("  Cases: ", n_total, " (", n_missing, " missing)\n", sep = "")
 
