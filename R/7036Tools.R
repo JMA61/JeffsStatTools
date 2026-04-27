@@ -2174,6 +2174,9 @@ jcomplete <- function(data, ...) {
 #'   table showing the pattern of 0s and 1s. Default is \code{FALSE}.
 #' @param remove Logical. If \code{TRUE}, removes the registration for
 #'   the specified variable. Default is \code{FALSE}.
+#' @param clear Logical. If \code{TRUE}, clears all dummy registrations
+#'   for the specified data frame. Use \code{jdummy(NULL)} to clear
+#'   registrations for all data frames at once. Default is \code{FALSE}.
 #'
 #' @return Invisibly returns \code{NULL}. Called for its side effect.
 #'
@@ -2188,12 +2191,14 @@ jcomplete <- function(data, ...) {
 #' jdummy(, cyl, show = TRUE)          # Show coding scheme
 #' jdummy(, cyl, show = "all")         # Full scheme (for many categories)
 #' jdummy()                             # Show all registrations
-#' jdummy(, cyl, remove = TRUE)        # Remove registration
-#' jdummy(NULL)                         # Clear all
+#' jdummy(, cyl, remove = TRUE)        # Remove one registration
+#' jdummy(mtcars, clear = TRUE)        # Clear all registrations for mtcars
+#' jdummy(NULL)                         # Clear registrations for ALL data frames
 #' }
 #'
 #' @export
-jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
+jdummy <- function(data, var, ref = "first", show = FALSE,
+                   remove = FALSE, clear = FALSE) {
 
   default_name <- getOption(".jst_default_data", default = NULL)
 
@@ -2266,14 +2271,37 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
     return(invisible(NULL))
   }
 
-  # -- jdummy(NULL) — clear all registrations --------------------------------
+  # -- jdummy(NULL) — clear ALL registrations across every data frame --------
   if (!missing(data) && is.null(data)) {
-    if (!is.null(default_name)) {
-      .jst_set_dummy(default_name, NULL)
-      message("All dummy registrations cleared for ", default_name, ".")
-    } else {
-      message("No default data frame set. Nothing to clear.")
+    all_dummy <- getOption(".jst_dummy", default = list())
+    if (length(all_dummy) == 0) {
+      message("No dummy registrations to clear.")
+      return(invisible(NULL))
     }
+
+    # Build a per-data-frame summary BEFORE clearing, so the message can
+    # tell the user what was lost.
+    summary_lines <- character(length(all_dummy))
+    for (i in seq_along(all_dummy)) {
+      dname <- names(all_dummy)[i]
+      regs  <- all_dummy[[i]]
+      if (is.null(regs) || length(regs) == 0) {
+        summary_lines[i] <- paste0("  - ", dname, " (no registrations)")
+      } else {
+        var_names <- vapply(regs, function(r) r$var_name, character(1))
+        summary_lines[i] <- paste0(
+          "  - ", dname, " (had ", length(var_names),
+          " registered: ", paste(var_names, collapse = ", "), ")"
+        )
+      }
+    }
+
+    options(.jst_dummy = NULL)
+
+    n_frames <- length(all_dummy)
+    cat("Cleared dummy registrations for ", n_frames,
+        " data frame", if (n_frames == 1L) "" else "s", ":\n", sep = "")
+    cat(paste(summary_lines, collapse = "\n"), "\n", sep = "")
     return(invisible(NULL))
   }
 
@@ -2287,7 +2315,38 @@ jdummy <- function(data, var, ref = "first", show = FALSE, remove = FALSE) {
     .jst_data_name <- deparse(substitute(data))
   }
 
+  # -- jdummy(SampleData, clear = TRUE) — per-data-frame clear ---------------
+  # Clears all dummy registrations for the named data frame. Other data
+  # frames' registrations are untouched.
+  if (isTRUE(clear)) {
+    existing <- .jst_get_dummy(.jst_data_name)
+    if (is.null(existing) || length(existing) == 0) {
+      message("No dummy registrations to clear for ", .jst_data_name, ".")
+    } else {
+      var_names <- vapply(existing, function(r) r$var_name, character(1))
+      .jst_set_dummy(.jst_data_name, NULL)
+      cat("Cleared ", length(var_names),
+          " dummy registration", if (length(var_names) == 1L) "" else "s",
+          " from ", .jst_data_name, ": ",
+          paste(var_names, collapse = ", "), ".\n", sep = "")
+    }
+    return(invisible(NULL))
+  }
+
   var_name <- deparse(substitute(var))
+
+  # Catch the literal NULL — users sometimes try `jdummy(SampleData, NULL)`
+  # or `jdummy(, NULL)`. Point them at the two valid clear syntaxes.
+  if (identical(var_name, "NULL")) {
+    stop(
+      "jdummy(): NULL is not a valid variable name. To clear dummy ",
+      "registrations for ", .jst_data_name, ", use jdummy(", .jst_data_name,
+      ", clear = TRUE). To clear registrations for ALL data frames, ",
+      "use jdummy(NULL) with no other arguments.",
+      call. = FALSE
+    )
+  }
+
   .jst_check_vars(data, var_name, .jst_data_name)
 
   # -- jdummy(, var, show = ...) on already-registered var: display only ----

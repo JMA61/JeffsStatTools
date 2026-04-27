@@ -4,7 +4,7 @@
 \alias{jdummy}
 \title{Register categorical variables for dummy coding in regression}
 \usage{
-jdummy(data, var, ref = "first", show = FALSE, remove = FALSE)
+jdummy(data, var, ref = "first", show = FALSE, remove = FALSE, clear = FALSE)
 }
 \arguments{
 \item{data}{A data frame, or omit to use the \code{juse()} default.
@@ -22,6 +22,10 @@ table showing the pattern of 0s and 1s. Default is \code{FALSE}.}
 
 \item{remove}{Logical. If \code{TRUE}, removes the registration for
 the specified variable. Default is \code{FALSE}.}
+
+\item{clear}{Logical. If \code{TRUE}, clears all dummy registrations
+for the specified data frame. Use \code{jdummy(NULL)} to clear
+registrations for all data frames at once. Default is \code{FALSE}.}
 }
 \value{
 Invisibly returns \code{NULL}. Called for its side effect.
@@ -45,8 +49,9 @@ jdummy(, cyl, ref = 6)              # Reference by numeric code
 jdummy(, cyl, show = TRUE)          # Show coding scheme
 jdummy(, cyl, show = "all")         # Full scheme (for many categories)
 jdummy()                             # Show all registrations
-jdummy(, cyl, remove = TRUE)        # Remove registration
-jdummy(NULL)                         # Clear all
+jdummy(, cyl, remove = TRUE)        # Remove one registration
+jdummy(mtcars, clear = TRUE)        # Clear all registrations for mtcars
+jdummy(NULL)                         # Clear registrations for ALL data frames
 }
 
 }
