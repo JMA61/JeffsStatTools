@@ -25,30 +25,19 @@ devtools::check(remote = TRUE)
 # To Commit the new version:
 git add -A
 
-git commit -m "v0.8.0: jplot() unified plotting function
+git commit -m "v0.8.2: jplot() unified plotting function
 
-- S3 generic with methods for all jst_* result objects (jplot.jst_lm,
-  jplot.jst_logistic, jplot.jst_ttest, jplot.jst_anova, jplot.jst_corr,
-  jplot.jst_chisq)
-- Data-first path for distributions (histogram, bar, grouped bar)
-- Formula-first path for relationships (scatterplot, boxplot) consistent
-  with jlm() / jaov() / jt() syntax
-- line = 'lm' | 'loess' | 'connect' with equation, R-squared, and band
-  options (ci, pi, see, none) for teaching homoskedasticity
-- Per-group regression lines and equations via by =
-- Pipeline integration: jfilter and jcomplete apply based on dataset name
-  (SPSS FILTER / USE ALL convention); yellow status notes highlight
-  session state; helpful errors for SPSS-style AND/OR/= syntax mistakes
-- jfilter now accepts jfilter(data, expr) signature
-- Defensive fixes to .jst_get_filter / .jst_get_complete getters
-- Variable labels used on plot axes (truncated at 35 chars if long)
-- Red title on plot console output; all session-state notes now yellow"
+Major work across Sessions 11-14:
+
+- New Case Processing Summary infrastructure: chain-style table
+  ...rest of the message...
+- 17 internal helpers gained full roxygen documentation."
 
 # To Push/Upload to GitHub
 git push
 
 # To create the version tag
-git tag -a v0.8.0 -m "Version 0.8.0"
+git tag -a v0.8.2 -m "Version 0.8.2"
 git push --tags
 
 # Verity that the tag exists:
