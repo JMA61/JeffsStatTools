@@ -362,6 +362,290 @@
   options(.jst_dummy = all_dummy)
 }
 
+#' Internal helper: build canonical dummy variable naming for a categorical variable
+#'
+#' Single source of truth for how categorical variables are turned into named
+#' dummy columns across the package. Called by \code{jdummy()} during
+#' registration and by \code{jlm()} / \code{jlogistic()} when handling
+#' \code{categorical =} arguments and auto-detected categorical IVs.
+#'
+#' Supports six input shapes:
+#' \enumerate{
+#'   \item haven_labelled with descriptive labels not containing the
+#'         variable name (e.g. Gender labelled "Male", "Female").
+#'   \item haven_labelled with descriptive labels already containing the
+#'         variable name (e.g. Program labelled "Program 1", "Program 2"...).
+#'   \item haven_labelled with labels that equal the codes as strings
+#'         (i.e. uninformative — labels carry no extra information).
+#'   \item Plain numeric with no labels.
+#'   \item Factor with character levels.
+#'   \item Character vector.
+#' }
+#'
+#' Naming algorithm:
+#' \enumerate{
+#'   \item Output form is always \code{VarName_Suffix}.
+#'   \item Suffix source per category: descriptive label if available,
+#'         numeric code otherwise. Mixed within a single variable is allowed
+#'         (descriptive wins per-category).
+#'   \item Canonicalise the chosen suffix: replace runs of non-alphanumeric
+#'         characters with single underscore; trim leading and trailing
+#'         underscores; if a suffix canonicalises to empty (label was entirely
+#'         non-alphanumeric), fall back to that category's code.
+#'   \item Anti-stutter: if the canonicalised suffix already begins with
+#'         \code{paste0(var_name, "_")}, do not prepend the variable name
+#'         again.
+#'   \item Detect duplicates: if two categories produce the same final name,
+#'         stop with an error pointing to \code{jrelabel()}.
+#' }
+#'
+#' Permissive reference matching: when \code{ref} is a character string,
+#' three matching attempts are made — direct match against canonical labels,
+#' canonicalised user input matched against canonical labels (so
+#' \code{"Program 3"} or \code{"3"} both find \code{"Program_3"}), and
+#' string match against codes (so \code{"3"} also matches code 3).
+#'
+#' @param x A vector — haven_labelled, factor, character, or numeric.
+#' @param var_name Character. The variable's name (used as the dummy
+#'   column prefix).
+#' @param ref Reference category specifier. May be \code{"first"} (default),
+#'   \code{"last"}, a numeric code, or a character string matching a
+#'   canonical label.
+#' @param name.length.warn Integer. Warn if any final dummy name exceeds
+#'   this many characters. Default 30.
+#'
+#' @return A list with components: \code{codes}, \code{labels}
+#'   (canonical, used for display), \code{dummy_names} (canonical, for
+#'   non-reference categories only), \code{var_type}, \code{ref_idx},
+#'   \code{ref_code}, \code{ref_label}, \code{non_ref_idx}, \code{notes}
+#'   (character vector of informational messages), \code{warnings_msg}
+#'   (character vector of warnings).
+#'
+#' @keywords internal
+.jst_make_dummy_names <- function(x, var_name, ref = "first",
+                                  name.length.warn = 30L) {
+
+  notes        <- character(0)
+  warnings_msg <- character(0)
+
+  # -- Step 1: classify input and extract codes + raw labels ----------------
+  is_haven <- haven::is.labelled(x)
+
+  if (is_haven) {
+    var_type   <- "haven_labelled"
+    val_labels <- labelled::val_labels(x)
+    codes      <- as.numeric(sort(unique(x[!is.na(x)])))
+    raw_labels <- character(length(codes))
+    for (i in seq_along(codes)) {
+      match_idx <- which(val_labels == codes[i])
+      if (length(match_idx) > 0) {
+        raw_labels[i] <- names(val_labels)[match_idx[1]]
+      } else {
+        raw_labels[i] <- as.character(codes[i])
+      }
+    }
+  } else if (is.factor(x)) {
+    var_type   <- "factor"
+    lvls       <- levels(droplevels(x))
+    codes      <- seq_along(lvls)
+    raw_labels <- lvls
+  } else if (is.character(x)) {
+    var_type   <- "character"
+    uniq       <- sort(unique(x[!is.na(x) & nzchar(x)]))
+    codes      <- seq_along(uniq)
+    raw_labels <- uniq
+  } else if (is.numeric(x)) {
+    var_type   <- "numeric"
+    codes      <- sort(unique(x[!is.na(x)]))
+    raw_labels <- as.character(codes)
+  } else {
+    stop("'", var_name, "' has an unsupported type for dummy coding ",
+         "(class: ", paste(class(x), collapse = "/"), ").",
+         call. = FALSE)
+  }
+
+  n_cats <- length(codes)
+  if (n_cats < 2) {
+    stop("'", var_name, "' has fewer than 2 categories. ",
+         "Cannot create dummy variables.", call. = FALSE)
+  }
+
+  # -- Step 2: choose suffix source per category ----------------------------
+  # Per-category rule: use the raw label if it is descriptive (non-empty
+  # and not equal to the code-as-string); otherwise use the code.
+  #
+  # "Descriptive" detection is per-category, so a variable with mixed
+  # descriptive and uninformative labels gets the most informative suffix
+  # available for each category.
+
+  code_as_str    <- as.character(codes)
+  is_descriptive <- nzchar(raw_labels) & raw_labels != code_as_str
+
+  # For non-haven types (factor, character, numeric), is_descriptive is
+  # also true when the label genuinely differs from the synthetic code.
+  # For numeric (no labels) all are "non-descriptive" → use codes. For
+  # factor and character all should be descriptive (raw_labels are the
+  # real values, and the codes are synthetic seq_along indices).
+
+  used_code_fallback <- !is_descriptive
+  suffix_source      <- ifelse(is_descriptive, raw_labels, code_as_str)
+
+  # -- Step 3: canonicalise each suffix -------------------------------------
+  canon <- gsub("[^A-Za-z0-9]+", "_", suffix_source)
+  canon <- gsub("^_+|_+$", "", canon)
+
+  # If canonicalisation produced an empty string (label was entirely
+  # non-alphanumeric), fall back to the code for that category.
+  empty_canon <- !nzchar(canon)
+  if (any(empty_canon)) {
+    canon[empty_canon]              <- code_as_str[empty_canon]
+    used_code_fallback[empty_canon] <- TRUE
+  }
+
+  # -- Step 4: anti-stutter and prepend var_name ----------------------------
+  prefix          <- paste0(var_name, "_")
+  already_prefixed <- startsWith(canon, prefix)
+  final_labels    <- ifelse(already_prefixed, canon, paste0(prefix, canon))
+
+  # -- Step 5: duplicate detection ------------------------------------------
+  if (anyDuplicated(final_labels) > 0) {
+    dup_idx   <- which(duplicated(final_labels) | duplicated(final_labels,
+                                                             fromLast = TRUE))
+    dup_pairs <- vapply(unique(final_labels[dup_idx]), function(d) {
+      offenders <- raw_labels[final_labels == d]
+      paste0("'", paste(offenders, collapse = "' and '"),
+             "' both produce '", d, "'")
+    }, character(1))
+    stop(
+      "Cannot create unique dummy names for '", var_name, "': ",
+      paste(dup_pairs, collapse = "; "), ". ",
+      "Use jrelabel() to give these categories distinct labels, or ",
+      "jrecode() to merge or rename them.",
+      call. = FALSE
+    )
+  }
+
+  # -- Step 6: resolve reference category -----------------------------------
+  if (is.character(ref) && tolower(ref) == "first") {
+    ref_idx <- 1L
+  } else if (is.character(ref) && tolower(ref) == "last") {
+    ref_idx <- n_cats
+  } else if (is.numeric(ref)) {
+    ref_idx <- which(codes == ref)
+    if (length(ref_idx) == 0) {
+      stop("Reference code ", ref, " not found in '", var_name,
+           "'. Available codes: ", paste(codes, collapse = ", "),
+           call. = FALSE)
+    }
+  } else if (is.character(ref)) {
+    # Try direct match against canonical labels first.
+    ref_idx <- which(final_labels == ref)
+    if (length(ref_idx) == 0) {
+      # Try canonicalising the user's input the same way labels were
+      # canonicalised, then match.
+      cleaned_ref <- gsub("[^A-Za-z0-9]+", "_", ref)
+      cleaned_ref <- gsub("^_+|_+$", "", cleaned_ref)
+      if (nzchar(cleaned_ref) && !startsWith(cleaned_ref, prefix)) {
+        cleaned_ref <- paste0(prefix, cleaned_ref)
+      }
+      ref_idx <- which(final_labels == cleaned_ref)
+    }
+    if (length(ref_idx) == 0) {
+      # Last try: match against codes-as-strings (so ref = "3" works for
+      # code 3 even when canonical label is "Program_3").
+      ref_idx <- which(code_as_str == ref)
+    }
+    if (length(ref_idx) == 0) {
+      stop("Reference '", ref, "' not found in '", var_name,
+           "'. Available labels: ", paste(final_labels, collapse = ", "),
+           call. = FALSE)
+    }
+  } else {
+    ref_idx <- 1L
+  }
+
+  ref_idx     <- as.integer(ref_idx[1])
+  ref_code    <- codes[ref_idx]
+  ref_label   <- final_labels[ref_idx]
+  non_ref_idx <- setdiff(seq_len(n_cats), ref_idx)
+  dummy_names <- final_labels[non_ref_idx]
+
+  # -- Step 7: build informational notes and warnings -----------------------
+  if (any(used_code_fallback)) {
+    notes <- c(notes, paste0(
+      "(Note: One or more dummy names for '", var_name, "' were built ",
+      "from numeric codes because descriptive value labels were not ",
+      "available. If these names aren't ideal, use jrelabel() to set ",
+      "value labels, or jrecode() to change the underlying values, ",
+      "then re-register with jdummy().)"
+    ))
+  }
+
+  long_names <- final_labels[nchar(final_labels) > name.length.warn]
+  if (length(long_names) > 0) {
+    warnings_msg <- c(warnings_msg, paste0(
+      "Some dummy names for '", var_name, "' exceed ", name.length.warn,
+      " characters: ", paste(shQuote(long_names), collapse = ", "),
+      ". The model will fit, but coefficient tables may look awkward. ",
+      "Use jrelabel() to shorten the labels before jdummy()."
+    ))
+  }
+
+  list(
+    codes        = codes,
+    labels       = final_labels,
+    dummy_names  = dummy_names,
+    var_type     = var_type,
+    ref_idx      = ref_idx,
+    ref_code     = ref_code,
+    ref_label    = ref_label,
+    non_ref_idx  = non_ref_idx,
+    notes        = notes,
+    warnings_msg = warnings_msg
+  )
+}
+
+
+#' Internal helper: expand a single registration into dummy columns
+#'
+#' Given a registration-shaped object (from jdummy storage or built
+#' in-flight via \code{.jst_make_dummy_names()}), add the dummy columns
+#' to \code{data} and replace \code{var_name} with the dummy names in
+#' \code{formula_str}. Used by \code{.jst_expand_dummies()} and by the
+#' auto-categorical pathways in jlm and jlogistic.
+#'
+#' @param data The data frame.
+#' @param formula_str The formula as a deparsed string.
+#' @param reg A registration object (must have \code{var_name},
+#'   \code{codes}, \code{non_ref_idx}, \code{dummy_names}).
+#' @return A list with components \code{data}, \code{formula_str},
+#'   \code{dummy_coef_names}.
+#' @keywords internal
+.jst_expand_one_dummy <- function(data, formula_str, reg) {
+
+  orig_col         <- as.numeric(data[[reg$var_name]])
+  dummy_coef_names <- character(0)
+
+  for (j in seq_along(reg$non_ref_idx)) {
+    idx   <- reg$non_ref_idx[j]
+    dname <- reg$dummy_names[j]
+    data[[dname]] <- ifelse(is.na(orig_col), NA_integer_,
+                            as.integer(orig_col == reg$codes[idx]))
+    dummy_coef_names <- c(dummy_coef_names, dname)
+  }
+
+  # Replace variable in formula with dummy names. Wrapping in parentheses
+  # ensures correct behaviour when the variable appears inside an
+  # interaction term (e.g. y ~ x * Religion).
+  dummy_plus  <- paste0("(", paste(reg$dummy_names, collapse = " + "), ")")
+  formula_str <- gsub(paste0("\\b", reg$var_name, "\\b"),
+                      dummy_plus, formula_str)
+
+  list(data = data, formula_str = formula_str,
+       dummy_coef_names = dummy_coef_names)
+}
+
+
 #' Internal helper: expand registered dummy variables in a formula and data frame
 #'
 #' Checks for jdummy registrations matching variables in the formula,
@@ -395,28 +679,16 @@
 
     for (reg in dummy_regs) {
       if (reg$var_name %in% model_vars && reg$var_name != dv_name) {
-        # Create dummy columns in data
-        orig_col <- as.numeric(data[[reg$var_name]])
-        for (j in seq_along(reg$non_ref_idx)) {
-          idx   <- reg$non_ref_idx[j]
-          dname <- reg$dummy_names[j]
-          data[[dname]] <- ifelse(is.na(orig_col), NA_integer_,
-                                  as.integer(orig_col == reg$codes[idx]))
-          dummy_coef_names <- c(dummy_coef_names, dname)
-        }
-
-        # Replace variable in formula string with dummy names.
-        # Wrapping in parentheses ensures correct behaviour when the variable
-        # appears inside an interaction term (e.g. y ~ x * Religion).
-        dummy_plus <- paste0("(", paste(reg$dummy_names, collapse = " + "), ")")
-        formula_str <- gsub(paste0("\\b", reg$var_name, "\\b"),
-                            dummy_plus, formula_str)
+        expanded <- .jst_expand_one_dummy(data, formula_str, reg)
+        data             <- expanded$data
+        formula_str      <- expanded$formula_str
+        dummy_coef_names <- c(dummy_coef_names, expanded$dummy_coef_names)
 
         ref_cats <- c(ref_cats, paste0(reg$var_name, " = ", reg$ref_label))
       }
     }
 
-    formula    <- stats::as.formula(formula_str)
+    formula <- stats::as.formula(formula_str)
   }
 
   list(data = data, formula = formula, ref_cats = ref_cats,
@@ -2474,111 +2746,33 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
     return(invisible(NULL))
   }
 
-  # -- Build registration ---------------------------------------------------
+  # -- Build registration via central helper --------------------------------
+  # All naming logic lives in .jst_make_dummy_names() so that jdummy and
+  # the auto-categorical pathways in jlm/jlogistic produce identical
+  # column names for the same input.
   col <- data[[var_name]]
-  is_haven <- haven::is.labelled(col)
+  built <- .jst_make_dummy_names(col, var_name, ref = ref)
 
-  var_type <- if (is_haven) "haven_labelled" else if (is.factor(col)) "factor" else "numeric"
-
-  # Extract categories: codes and labels
-  if (is_haven) {
-    val_labels <- labelled::val_labels(col)
-    codes  <- as.numeric(sort(unique(col[!is.na(col)])))
-    labels_vec <- character(length(codes))
-    for (i in seq_along(codes)) {
-      match_idx <- which(val_labels == codes[i])
-      if (length(match_idx) > 0) {
-        labels_vec[i] <- names(val_labels)[match_idx[1]]
-      } else {
-        labels_vec[i] <- as.character(codes[i])
-      }
-    }
-  } else if (is.factor(col)) {
-    lvls <- levels(droplevels(col))
-    codes <- seq_along(lvls)
-    labels_vec <- lvls
-  } else {
-    codes <- sort(unique(col[!is.na(col)]))
-    labels_vec <- as.character(codes)
-  }
-
-  # Canonicalise labels to the underscored form used throughout the package.
-  # Replaces non-alphanumeric chars with underscores, then prepends the
-  # variable name unless the label already begins with it (haven_labelled
-  # labels often include the variable name as a prefix).
-  if (is_haven && all(nchar(labels_vec) > 0) &&
-      !all(labels_vec == as.character(codes))) {
-    cleaned <- gsub("[^A-Za-z0-9]+", "_", labels_vec)
-    already_prefixed <- startsWith(cleaned, paste0(var_name, "_"))
-    labels_vec <- ifelse(already_prefixed,
-                         cleaned,
-                         paste0(var_name, "_", cleaned))
-  }
-
-  n_cats    <- length(codes)
   n_total   <- length(col)
   n_missing <- sum(is.na(col))
 
-  if (n_cats < 2) {
-    stop(paste0("'", var_name, "' has fewer than 2 categories. ",
-                "Cannot create dummy variables."), call. = FALSE)
-  }
-
-  # Determine reference category
-  if (is.character(ref) && tolower(ref) == "first") {
-    ref_idx <- 1
-  } else if (is.character(ref) && tolower(ref) == "last") {
-    ref_idx <- n_cats
-  } else if (is.numeric(ref)) {
-    ref_idx <- which(codes == ref)
-    if (length(ref_idx) == 0) {
-      stop(paste0("Reference code ", ref, " not found in '", var_name,
-                  "'. Available codes: ", paste(codes, collapse = ", ")),
-           call. = FALSE)
-    }
-  } else if (is.character(ref)) {
-    ref_idx <- which(labels_vec == ref)
-    if (length(ref_idx) == 0) {
-      stop(paste0("Reference label '", ref, "' not found in '", var_name,
-                  "'. Available labels: ", paste(labels_vec, collapse = ", ")),
-           call. = FALSE)
-    }
-  } else {
-    ref_idx <- 1
-  }
-
-  ref_code  <- codes[ref_idx]
-  ref_label <- labels_vec[ref_idx]
-
-  # Build dummy variable names
-  non_ref_idx <- setdiff(seq_len(n_cats), ref_idx)
-  if (is_haven && all(nchar(labels_vec) > 0) &&
-      !all(labels_vec == as.character(codes))) {
-    # Use haven labels for names. labels_vec was canonicalised earlier
-    # (cleaned non-alphanumeric → underscore, with var-name prefix if
-    # not already present), so dummy_names is just the non-reference
-    # subset of it.
-    dummy_names <- labels_vec[non_ref_idx]
-  } else {
-    # Use numeric codes
-    dummy_names <- paste0(var_name, "_", codes[non_ref_idx])
-    if (!is_haven) {
-      cat("(Note: ", var_name, " has no value labels \u2014 dummy variables will be named\n",
-          " by numeric code. Use jrelabel() to add descriptive labels.)\n", sep = "")
-    }
-  }
+  # Print any informational notes from the helper (e.g. "codes used as
+  # fallback because labels were not descriptive"). Warnings are deferred
+  # until after the registration summary so the user sees the full result
+  # first.
+  for (n in built$notes) cat(n, "\n", sep = "")
 
   # Store registration
   reg <- list(
     var_name    = var_name,
-    var_type    = var_type,
-    codes       = codes,
-    labels      = labels_vec,
-    ref_idx     = ref_idx,
-    ref_code    = ref_code,
-    ref_label   = ref_label,
-    dummy_names = dummy_names,
-    non_ref_idx = non_ref_idx,
+    var_type    = built$var_type,
+    codes       = built$codes,
+    labels      = built$labels,
+    ref_idx     = built$ref_idx,
+    ref_code    = built$ref_code,
+    ref_label   = built$ref_label,
+    dummy_names = built$dummy_names,
+    non_ref_idx = built$non_ref_idx,
     n_total     = n_total,
     n_missing   = n_missing
   )
@@ -2595,15 +2789,22 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
   }
   .jst_set_dummy(.jst_data_name, ds)
 
-  # Print registration summary. ref_label is the cleaned canonical form
-  # (set during label canonicalisation above), so no further processing
-  # is needed.
+  # Print registration summary. ref_label and dummy_names are already in
+  # canonical form from .jst_make_dummy_names() — no further processing
+  # needed here.
   .cat_red("Dummy Variable Registration\n")
   .jst_default_note(.jst_data_name, extra_newline = TRUE)
-  cat("  Variable: ", var_name, " (", var_type, ")\n", sep = "")
-  cat("  Reference category: ", ref_label, "\n", sep = "")
-  cat("  Dummy variables: ", paste(dummy_names, collapse = ", "), "\n", sep = "")
+  cat("  Variable: ", var_name, " (", built$var_type, ")\n", sep = "")
+  cat("  Reference category: ", built$ref_label, "\n", sep = "")
+  cat("  Dummy variables: ", paste(built$dummy_names, collapse = ", "),
+      "\n", sep = "")
   cat("  Cases: ", n_total, " (", n_missing, " missing)\n", sep = "")
+
+  # Pull short locals out of `built` to keep the show=TRUE block readable.
+  codes      <- built$codes
+  labels_vec <- built$labels
+  ref_idx    <- built$ref_idx
+  n_cats     <- length(codes)
 
   # Show coding scheme if requested
   if (!identical(show, FALSE)) {
@@ -2656,6 +2857,11 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
   }
 
   cat("\n")
+
+  # Emit any deferred warnings (e.g. long names) after the user has seen
+  # the full registration so the warning has context.
+  for (w in built$warnings_msg) warning(w, call. = FALSE)
+
   invisible(NULL)
 }
 
@@ -5478,6 +5684,7 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
   #      everything else → numeric
   # DV is always numeric regardless of overrides.
   auto_ref_cats <- character(0)
+  auto_cat_regs <- list()  # in-flight registrations for auto-cat / categorical = vars
   dv_name <- all.vars(formula)[1]
 
   # --- DV sanity check: warn if the DV looks categorical or dichotomous ----
@@ -5703,25 +5910,21 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
 
     # --- Override: categorical = "Var" forces categorical ---
     if (v %in% categorical) {
-      if (haven::is.labelled(data[[v]])) {
-        data[[v]] <- haven::as_factor(data[[v]])
-      } else {
-        # Plain numeric or character — convert to factor using sorted unique values
-        unique_vals <- sort(unique(data[[v]][!is.na(data[[v]])]))
-        data[[v]] <- factor(data[[v]], levels = unique_vals)
-      }
-      ref_level <- levels(data[[v]])[1]
-      auto_ref_cats <- c(auto_ref_cats, paste0(v, " = ", ref_level))
+      reg <- .jst_make_dummy_names(data[[v]], v, ref = "first")
+      auto_cat_regs[[v]] <- reg
+      for (n in reg$notes) cat(n, "\n", sep = "")
+      for (w in reg$warnings_msg) warning(w, call. = FALSE)
+      auto_ref_cats <- c(auto_ref_cats, paste0(v, " = ", reg$ref_label))
       next
     }
 
     # --- Auto-detection (two-helper classifier) ---
     #
-    # Intent helper first: only factor the IV when the user has explicitly
-    # signalled categorical (jdummy-registered, or factor/logical/character
-    # class). jdummy-registered IVs are actually handled upstream by
-    # .jst_expand_dummies() and won't reach this block; the Rule A check
-    # inside .jst_is_categorical() is defensive.
+    # Intent helper first: only treat the IV as categorical when the user
+    # has explicitly signalled categorical (jdummy-registered, or
+    # factor/logical/character class). jdummy-registered IVs are handled
+    # upstream by .jst_expand_dummies() and won't reach this block; the
+    # Rule A check inside .jst_is_categorical() is defensive.
     #
     # If the intent helper returns FALSE, the IV enters the model as
     # numeric. The structural helper (.jst_is_discrete_integer()) is then
@@ -5730,13 +5933,11 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
     # data, or small-range whole-number numeric), the user may have meant
     # to register with jdummy() or pass categorical = instead.
     if (.jst_is_categorical(data[[v]], v, .jst_data_name)) {
-      # Intent categorical — convert to factor
-      if (!is.factor(data[[v]])) {
-        unique_vals <- sort(unique(data[[v]][!is.na(data[[v]])]))
-        data[[v]] <- factor(data[[v]], levels = unique_vals)
-      }
-      ref_level <- levels(data[[v]])[1]
-      auto_ref_cats <- c(auto_ref_cats, paste0(v, " = ", ref_level))
+      reg <- .jst_make_dummy_names(data[[v]], v, ref = "first")
+      auto_cat_regs[[v]] <- reg
+      for (n in reg$notes) cat(n, "\n", sep = "")
+      for (w in reg$warnings_msg) warning(w, call. = FALSE)
+      auto_ref_cats <- c(auto_ref_cats, paste0(v, " = ", reg$ref_label))
     } else {
       # Not intent-categorical. Strip haven class if present, leave as
       # numeric in the model.
@@ -5796,6 +5997,26 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
         )
       }
     }
+  }
+
+  # -- Apply auto-categorical expansions ------------------------------------
+  # For variables that were determined to be categorical (via categorical =
+  # argument or auto-detection), an in-flight registration was built but
+  # the formula/data weren't yet updated. Apply those expansions now using
+  # the same .jst_expand_one_dummy() helper that .jst_expand_dummies()
+  # uses for jdummy registrations, so naming is uniform across pathways.
+  if (length(auto_cat_regs) > 0) {
+    formula_str <- deparse(formula, width.cutoff = 500)
+    for (vname in names(auto_cat_regs)) {
+      reg <- auto_cat_regs[[vname]]
+      reg$var_name <- vname
+      expanded2 <- .jst_expand_one_dummy(data, formula_str, reg)
+      data             <- expanded2$data
+      formula_str      <- expanded2$formula_str
+      dummy_coef_names <- c(dummy_coef_names, expanded2$dummy_coef_names)
+    }
+    formula    <- stats::as.formula(formula_str)
+    model_vars <- all.vars(formula)
   }
 
   # Build model frame and sample_info early so case processing block can
@@ -6234,6 +6455,7 @@ jlogistic <- function(formula, data, subset = NULL, labels = TRUE,
 
   auto_detected  <- character(0)
   auto_ref_cats  <- character(0)
+  auto_cat_regs  <- list()  # in-flight registrations for auto-cat / categorical = vars
   all_ref_cats   <- ref_cats
 
   # Exclude original variable names that were expanded by jdummy()
@@ -6259,38 +6481,105 @@ jlogistic <- function(formula, data, subset = NULL, labels = TRUE,
 
     # --- Override: categorical = "Var" forces categorical ---
     if (!is.null(categorical) && v %in% categorical) {
-      if (haven::is.labelled(data[[v]])) {
-        data[[v]] <- haven::as_factor(data[[v]])
-      } else if (!is.factor(data[[v]])) {
-        unique_vals <- sort(unique(data[[v]][!is.na(data[[v]])]))
-        data[[v]] <- factor(data[[v]], levels = unique_vals)
-      }
-      ref_val <- levels(data[[v]])[1]
+      reg <- .jst_make_dummy_names(data[[v]], v, ref = "first")
+      auto_cat_regs[[v]] <- reg
+      for (n in reg$notes) cat(n, "\n", sep = "")
+      for (w in reg$warnings_msg) warning(w, call. = FALSE)
       auto_ref_cats <- c(auto_ref_cats,
-                         paste0(v, " = ", ref_val, " (first category)"))
+                         paste0(v, " = ", reg$ref_label, " (first category)"))
       next
     }
 
     # --- Auto-detection via unified classifier ---
     if (.jst_is_categorical(data[[v]], v, .jst_data_name)) {
-      if (haven::is.labelled(data[[v]])) {
-        data[[v]] <- haven::as_factor(data[[v]])
-      } else if (!is.factor(data[[v]])) {
-        unique_vals <- sort(unique(data[[v]][!is.na(data[[v]])]))
-        data[[v]] <- factor(data[[v]], levels = unique_vals)
-      }
+      reg <- .jst_make_dummy_names(data[[v]], v, ref = "first")
+      auto_cat_regs[[v]] <- reg
+      for (n in reg$notes) cat(n, "\n", sep = "")
+      for (w in reg$warnings_msg) warning(w, call. = FALSE)
       auto_detected <- c(auto_detected, v)
-      ref_val       <- levels(data[[v]])[1]
       auto_ref_cats <- c(auto_ref_cats,
-                         paste0(v, " = ", ref_val, " (first category)"))
+                         paste0(v, " = ", reg$ref_label, " (first category)"))
     } else {
+      # Not intent-categorical. Strip haven class if present, leave as
+      # numeric in the model.
       if (haven::is.labelled(data[[v]])) {
         data[[v]] <- as.numeric(data[[v]])
+      }
+      # Check for dichotomy first: dichotomies are valid as numeric IVs
+      # in logistic regression (the slope on the log-odds is the
+      # contrast). They do not need dummy-coding. The discrete-integer
+      # warning would be misleading for them. Soft coding-specific
+      # warnings only:
+      #   - 0/1, factor, character, logical: no warning, clean run.
+      #   - 1/2: model runs correctly, but recoding to 0/1 makes the
+      #     intercept easier to interpret.
+      #   - other (e.g., 5/10): non-standard coding; slope represents
+      #     per-unit change, recoding to 0/1 advised.
+      iv_dich <- .jst_is_dichotomy(data[[v]])
+      if (iv_dich$is_dichotomy) {
+        if (iv_dich$coding == "1/2") {
+          warning(
+            v, " is a 1/2 dichotomy. The model runs correctly, but ",
+            "recoding to 0/1 makes the intercept easier to interpret. ",
+            "To recode:\n\n",
+            "  ", .jst_data_name, "$", v, "R <- jrecode(",
+              .jst_data_name, ", ", v, ", map = \"1=0; 2=1\")\n",
+            "  jlogistic(", deparse(formula[[2]]), " ~ ", v, "R)\n\n",
+            "For other approaches (jdummy, categorical = ...) see ?jlogistic.",
+            call. = FALSE
+          )
+        } else if (iv_dich$coding == "other") {
+          warning(
+            v, " is a dichotomy with non-standard coding. The slope ",
+            "represents per-unit change rather than the contrast between ",
+            "categories. Consider recoding to 0/1 for clearer interpretation. ",
+            "Adapt the values below to match this variable's actual codes:\n\n",
+            "  ", .jst_data_name, "$", v, "R <- jrecode(",
+              .jst_data_name, ", ", v, ", map = \"<oldval1>=0; <oldval2>=1\")\n",
+            "  jlogistic(", deparse(formula[[2]]), " ~ ", v, "R)\n\n",
+            "For other approaches (jdummy, categorical = ...) see ?jlogistic.",
+            call. = FALSE
+          )
+        }
+        # 0/1, factor, character, logical: no warning.
+      } else if (.jst_is_discrete_integer(data[[v]], v, .jst_data_name)) {
+        # Non-dichotomous but categorical-like structure: emit the
+        # informational warning so the user can confirm continuous
+        # treatment or switch to categorical.
+        warning(
+          v, " has categorical-like structure (small-range integer ",
+          "or labelled values) but is entering the model as a continuous ",
+          "predictor. If continuous treatment is intended (e.g. a Likert ",
+          "scale), no action is needed. To treat as categorical, register ",
+          "with jdummy:\n\n",
+          "  jdummy(", .jst_data_name, ", ", v, ")\n",
+          "  jlogistic(", deparse(formula), ")\n\n",
+          "For other approaches (categorical = ...) see ?jlogistic.",
+          call. = FALSE
+        )
       }
     }
   }
 
   all_ref_cats <- c(ref_cats, auto_ref_cats)
+
+  # -- Apply auto-categorical expansions ------------------------------------
+  # Same pattern as jlm: in-flight registrations built above are now
+  # applied via .jst_expand_one_dummy() so dummy column names are uniform
+  # across pathways.
+  if (length(auto_cat_regs) > 0) {
+    formula_str <- deparse(formula, width.cutoff = 500)
+    for (vname in names(auto_cat_regs)) {
+      reg <- auto_cat_regs[[vname]]
+      reg$var_name <- vname
+      expanded2 <- .jst_expand_one_dummy(data, formula_str, reg)
+      data             <- expanded2$data
+      formula_str      <- expanded2$formula_str
+      dummy_coef_names <- c(dummy_coef_names, expanded2$dummy_coef_names)
+    }
+    formula    <- stats::as.formula(formula_str)
+    model_vars <- all.vars(formula)
+  }
 
   if (haven::is.labelled(data[[dv_name]])) {
     data[[dv_name]] <- as.numeric(data[[dv_name]])
