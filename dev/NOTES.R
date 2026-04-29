@@ -23,25 +23,20 @@ devtools::check(remote = TRUE)
 # 2) Run this code IN THE TERMINAL - note the change to the version number:
 
 # To Commit the new version:
+# Stage and commit (skip if already done in RStudio)
 git add -A
-
 git commit -m "v0.8.3: jfreq case processing + unified dummy naming"
 
+# Create annotated tag BEFORE push so --follow-tags carries it up
+git tag -a v0.8.3 -m "v0.8.3: jfreq case processing + unified dummy naming"
 
+# Push commits and associated annotated tags together
+git push --follow-tags
 
-# To Push/Upload to GitHub
-git push
+# Verify
+git tag -l "v0.8.3"
 
-# To create the version tag
-git tag -a v0.8.3 -m "Version 0.8.3"
-git push --tags
-
-# Verity that the tag exists:
-git tag
-
-
-
-
-
+## to show all uploads under version 8.x    (Unnecessary)
+git tag -l "v0.8.*"
 
 
