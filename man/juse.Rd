@@ -36,7 +36,7 @@ which creates a snapshot that can become stale after modifications.
 \donttest{
 juse(mtcars)           # Set mtcars as the default
 juse()                 # Display current default
-jdesc(, mpg, hp)       # Uses mtcars automatically
+jdesc(mpg, hp)         # Uses mtcars automatically
 juse(NULL)             # Clear the default
 }
 

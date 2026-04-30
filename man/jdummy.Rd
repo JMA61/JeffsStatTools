@@ -41,16 +41,16 @@ datasets preserves each dataset's registrations independently.
 \examples{
 \donttest{
 juse(mtcars)
-jdummy(, cyl)                         # Register, first category as reference
-jdummy(, cyl, ref = "last")          # Last category as reference
-jdummy(, cyl, ref = 6)              # Reference by numeric code
+jdummy(cyl)                          # Register, first category as reference
+jdummy(cyl, ref = "last")            # Last category as reference
+jdummy(cyl, ref = 6)                 # Reference by numeric code
 # For haven-labelled variables, use the label name:
-# jdummy(, Employment, ref = "Part-Time")
-jdummy(, cyl, show = TRUE)          # Show coding scheme
-jdummy(, cyl, show = "all")         # Full scheme (for many categories)
+# jdummy(Employment, ref = "Part-Time")
+jdummy(cyl, show = TRUE)             # Show coding scheme
+jdummy(cyl, show = "all")            # Full scheme (for many categories)
 jdummy()                             # Show all registrations
-jdummy(, cyl, remove = TRUE)        # Remove one registration
-jdummy(mtcars, clear = TRUE)        # Clear all registrations for mtcars
+jdummy(cyl, remove = TRUE)           # Remove one registration
+jdummy(mtcars, clear = TRUE)         # Clear all registrations for mtcars
 jdummy(NULL)                         # Clear registrations for ALL data frames
 }
 

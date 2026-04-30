@@ -28,7 +28,7 @@ to the result. If omitted, an auto-generated label is used.}
 \value{
 A numeric vector the same length as \code{nrow(data)}, suitable for
 assigning to a new column:
-\code{MyData$ScaleMean <- javg(, Var1, Var2, Var3)}.
+\code{MyData$ScaleMean <- javg(Var1, Var2, Var3)}.
 }
 \description{
 \code{javg()} computes the mean of values across multiple variables for each
@@ -53,22 +53,22 @@ range of consecutive columns (e.g. \code{Attitude1:Attitude6}).
 juse(MyData)
 
 # Mean of three variables (all must be non-missing)
-MyData$Avg <- javg(, Score1, Score2, Score3)
+MyData$Avg <- javg(Score1, Score2, Score3)
 
 # Mean with partial data allowed (at least 1 non-missing)
-MyData$Avg <- javg(, Score1, Score2, Score3, min.valid = 1)
+MyData$Avg <- javg(Score1, Score2, Score3, min.valid = 1)
 
 # Mean using colon range for consecutive columns
-MyData$ScaleMean <- javg(, Attitude1:Attitude6)
+MyData$ScaleMean <- javg(Attitude1:Attitude6)
 
 # Mix colon ranges and explicit names (e.g. after reverse-coding an item)
-MyData$ScaleMean <- javg(, Attitude1:Attitude3, Attitude4R, Attitude5:Attitude6)
+MyData$ScaleMean <- javg(Attitude1:Attitude3, Attitude4R, Attitude5:Attitude6)
 
 # Fixed denominator (always divide by total number of variables)
-MyData$Avg <- javg(, Score1, Score2, Score3, min.valid = 1, fixed = TRUE)
+MyData$Avg <- javg(Score1, Score2, Score3, min.valid = 1, fixed = TRUE)
 
 # With a custom variable label
-MyData$ScaleMean <- javg(, Attitude1:Attitude6,
+MyData$ScaleMean <- javg(Attitude1:Attitude6,
                          var_label = "Scale Mean Score")
 
 # With an explicit data frame (instead of using juse default)

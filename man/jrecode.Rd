@@ -121,7 +121,7 @@ df$gearR5 <- jrecode(df, gear, map = "99=NA; else=copy")
 
 # Using juse() default
 juse(df)
-df$gearR6 <- jrecode(, gear, map = "3=1; 4=2; 5=3",
+df$gearR6 <- jrecode(gear, map = "3=1; 4=2; 5=3",
                       labels = "1=Three; 2=Four; 3=Five")
 
 }

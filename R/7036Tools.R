@@ -1855,44 +1855,6 @@
 }
 
 
-#' Internal helper: error when a data-first function is called without the leading comma
-#'
-#' Called when a data-first function's \code{data} argument fails to
-#' evaluate. This typically means the user wrote \code{jfreq(VarName)}
-#' instead of \code{jfreq(, VarName)} — they forgot the leading comma
-#' that signals "use the juse() default and treat this as a variable
-#' name." Produces a tailored error message pointing to the missing
-#' comma, with the precise wording adjusted depending on whether a
-#' \code{juse()} default is currently set.
-#'
-#' @param data_expr_str Character. The deparsed expression the user
-#'   passed for \code{data}, used verbatim in the error message.
-#' @param fn_name Character. The calling function's name, used in
-#'   suggested fixes within the error message.
-#' @param original_error The error object thrown by the failed evaluation
-#'   (retained for possible future inspection; not used by the helper
-#'   itself).
-#'
-#' @return Never returns — always calls \code{stop()}.
-#'
-#' @keywords internal
-.jst_missing_comma_error <- function(data_expr_str, fn_name, original_error) {
-  default_df <- getOption(".jst_default_data", default = NULL)
-  if (!is.null(default_df)) {
-    stop(paste0(
-      "If '", data_expr_str, "' is a variable name in '", default_df,
-      "', add a leading comma: ", fn_name, "(, ", data_expr_str, ").\n",
-      "Otherwise, check spelling and capitalisation, or verify the data frame is loaded."
-    ), call. = FALSE)
-  } else {
-    stop(paste0(
-      "'", data_expr_str, "' not found. Did you mean to use it as a variable name?\n",
-      "If so, provide the data frame: ", fn_name, "(MyData, ", data_expr_str, ")\n",
-      "Or set a default first with juse(MyData), then: ", fn_name, "(, ", data_expr_str, ")"
-    ), call. = FALSE)
-  }
-}
-
 
 #' Internal helper: parse a recoding-map string into a structured rule list
 #'
@@ -2097,7 +2059,7 @@
 #' \donttest{
 #' juse(mtcars)           # Set mtcars as the default
 #' juse()                 # Display current default
-#' jdesc(, mpg, hp)       # Uses mtcars automatically
+#' jdesc(mpg, hp)         # Uses mtcars automatically
 #' juse(NULL)             # Clear the default
 #' }
 #'
@@ -2166,9 +2128,7 @@ juse <- function(data) {
 #'
 #' @param data Optional data frame. If supplied, the filter is stored on
 #'   that dataset specifically. If omitted, the dataset set by
-#'   \code{juse()} is used. For consistency with other package functions,
-#'   you can also use a leading comma to skip this argument
-#'   (e.g. \code{jfilter(, Age < 40)}).
+#'   \code{juse()} is used.
 #' @param expr A logical expression (e.g. \code{Age < 40 & Gender == 1}),
 #'   or one of the following special values:
 #'   \describe{
@@ -2185,7 +2145,6 @@ juse <- function(data) {
 #' \donttest{
 #' juse(mtcars)
 #' jfilter(cyl == 4)             # Set using juse default
-#' jfilter(, cyl == 4)           # Same as above (leading comma)
 #' jfilter(mtcars, cyl == 4)     # Explicit dataset
 #' jfilter(cyl == 4 & mpg > 20)  # Compound condition
 #' jfilter(off)                  # Deactivate
@@ -2313,7 +2272,7 @@ jfilter <- function(data, expr) {
     # jfilter(, <expr>) — leading comma + juse default
     if (is.null(raw_expr)) {
       stop("jfilter(): no filter expression supplied. ",
-           "Example: jfilter(, Age < 40)", call. = FALSE)
+           "Example: jfilter(Age < 40)", call. = FALSE)
     }
     filter_raw <- raw_expr
   } else {
@@ -2453,8 +2412,8 @@ jfilter <- function(data, expr) {
 #' @examples
 #' \donttest{
 #' juse(mtcars)
-#' jcomplete(, mpg, hp, wt, am)
-#' jdesc(, mpg)                   # Uses only complete cases on those 4 vars
+#' jcomplete(mpg, hp, wt, am)
+#' jdesc(mpg)                     # Uses only complete cases on those 4 vars
 #' jcomplete(off)                 # Deactivate
 #' jcomplete(on)                  # Reactivate
 #' jcomplete()                    # Check status
@@ -2682,16 +2641,16 @@ jcomplete <- function(data, ...) {
 #' @examples
 #' \donttest{
 #' juse(mtcars)
-#' jdummy(, cyl)                         # Register, first category as reference
-#' jdummy(, cyl, ref = "last")          # Last category as reference
-#' jdummy(, cyl, ref = 6)              # Reference by numeric code
+#' jdummy(cyl)                          # Register, first category as reference
+#' jdummy(cyl, ref = "last")            # Last category as reference
+#' jdummy(cyl, ref = 6)                 # Reference by numeric code
 #' # For haven-labelled variables, use the label name:
-#' # jdummy(, Employment, ref = "Part-Time")
-#' jdummy(, cyl, show = TRUE)          # Show coding scheme
-#' jdummy(, cyl, show = "all")         # Full scheme (for many categories)
+#' # jdummy(Employment, ref = "Part-Time")
+#' jdummy(cyl, show = TRUE)             # Show coding scheme
+#' jdummy(cyl, show = "all")            # Full scheme (for many categories)
 #' jdummy()                             # Show all registrations
-#' jdummy(, cyl, remove = TRUE)        # Remove one registration
-#' jdummy(mtcars, clear = TRUE)        # Clear all registrations for mtcars
+#' jdummy(cyl, remove = TRUE)           # Remove one registration
+#' jdummy(mtcars, clear = TRUE)         # Clear all registrations for mtcars
 #' jdummy(NULL)                         # Clear registrations for ALL data frames
 #' }
 #'
@@ -2770,8 +2729,15 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
     return(invisible(NULL))
   }
 
+  # -- Capture substitute BEFORE any evaluation ------------------------------
+  # Needed for the literal-NULL detection idiom and for the helper call.
+  raw_data <- if (!missing(data)) substitute(data) else NULL
+
   # -- jdummy(NULL) — clear ALL registrations across every data frame --------
-  if (!missing(data) && is.null(data)) {
+  # The condition "data was supplied AND substituted expression is NULL"
+  # detects the literal jdummy(NULL) call. Mirrors jfilter(NULL) and
+  # jcomplete(NULL).
+  if (!missing(data) && is.null(raw_data)) {
     all_dummy <- getOption(".jst_dummy", default = list())
     if (length(all_dummy) == 0) {
       message("No dummy registrations to clear.")
@@ -2804,19 +2770,47 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
     return(invisible(NULL))
   }
 
-  # -- Resolve data frame ----------------------------------------------------
-  .jst_data_name <- NULL
-  if (missing(data)) {
-    resolved <- .jst_resolve_data(envir = parent.frame())
-    data <- resolved$data
-    .jst_data_name <- resolved$name
+  # -- Resolve the first argument via the standard helper -------------------
+  # Three modes possible at this point:
+  #   explicit            : jdummy(SampleData, ...)        - data is a frame
+  #   default             : jdummy(, var)                  - leading-comma form
+  #   symbol_with_default : jdummy(var, ...)               - bare-symbol form
+  arg1 <- .jst_resolve_first_arg(
+    data_sub      = raw_data,
+    data_missing  = missing(data),
+    fn_name       = "jdummy",
+    envir         = parent.frame(),
+    accept_vector = FALSE
+  )
+
+  data              <- arg1$data
+  .jst_data_name    <- arg1$name
+  .jst_default_used <- arg1$mode %in% c("default", "symbol_with_default")
+
+  # -- A' check: when data was omitted, the var slot must not be filled
+  # positionally. Named args (ref, show, remove, clear) are always fine.
+  if (arg1$mode == "symbol_with_default" && !missing(var)) {
+    displaced <- deparse(substitute(var))
+    stop("jdummy(): when the data argument is omitted, all subsequent arguments must be named. ",
+         "Use jdummy(", deparse(arg1$first_arg_sub),
+         ", ref = ", displaced, ")",
+         call. = FALSE)
+  }
+
+  # -- Determine var_name based on mode -------------------------------------
+  if (arg1$mode == "symbol_with_default") {
+    var_name <- deparse(arg1$first_arg_sub)
+  } else if (!missing(var)) {
+    var_name <- deparse(substitute(var))
   } else {
-    .jst_data_name <- deparse(substitute(data))
+    var_name <- NULL  # only reachable in the clear-only path below
   }
 
   # -- jdummy(SampleData, clear = TRUE) — per-data-frame clear ---------------
   # Clears all dummy registrations for the named data frame. Other data
-  # frames' registrations are untouched.
+  # frames' registrations are untouched. Runs before any var-related logic
+  # because clear is a data-frame-level operation; the var argument (if
+  # any) is irrelevant here.
   if (isTRUE(clear)) {
     existing <- .jst_get_dummy(.jst_data_name)
     if (is.null(existing) || length(existing) == 0) {
@@ -2832,7 +2826,14 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
     return(invisible(NULL))
   }
 
-  var_name <- deparse(substitute(var))
+  # If we got here without a var, the user passed neither data alone (above
+  # would have hit clear or returned), nor a usable variable name. Error.
+  if (is.null(var_name)) {
+    stop("jdummy(): no variable supplied. ",
+         "Use jdummy(VarName) to register, jdummy(VarName, remove = TRUE) ",
+         "to remove, or jdummy(NULL) to clear all registrations.",
+         call. = FALSE)
+  }
 
   # Catch the literal NULL — users sometimes try `jdummy(SampleData, NULL)`
   # or `jdummy(, NULL)`. Point them at the two valid clear syntaxes.
@@ -2848,7 +2849,7 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 
   .jst_check_vars(data, var_name, .jst_data_name)
 
-  # -- jdummy(, var, show = ...) on already-registered var: display only ----
+  # -- jdummy(var, show = ...) on already-registered var: display only ------
   # If the user calls jdummy() naming an already-registered variable and
   # passes show = ... but does NOT pass ref = ..., treat the call as a
   # display-only request. This prevents accidentally clobbering a non-
@@ -2864,7 +2865,7 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 
         # Print the existing registration summary
         .cat_red("Dummy Variable Registration\n")
-        .jst_default_note(.jst_data_name, extra_newline = TRUE)
+        if (.jst_default_used) .jst_default_note(.jst_data_name, extra_newline = TRUE)
         cat("  Variable: ", reg$var_name, " (", reg$var_type, ")\n", sep = "")
 
         # ref_label is stored in canonical form from the original registration
@@ -2922,7 +2923,7 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
     # If no existing registration, fall through to register-and-display.
   }
 
-  # -- jdummy(, var, remove = TRUE) — remove one registration ----------------
+  # -- jdummy(var, remove = TRUE) — remove one registration -----------------
   if (remove) {
     ds <- .jst_get_dummy(.jst_data_name)
     if (!is.null(ds)) {
@@ -2981,7 +2982,7 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
   # canonical form from .jst_make_dummy_names() — no further processing
   # needed here.
   .cat_red("Dummy Variable Registration\n")
-  .jst_default_note(.jst_data_name, extra_newline = TRUE)
+  if (.jst_default_used) .jst_default_note(.jst_data_name, extra_newline = TRUE)
   cat("  Variable: ", var_name, " (", built$var_type, ")\n", sep = "")
   cat("  Reference category: ", built$ref_label, "\n", sep = "")
   cat("  Dummy variables: ", paste(built$dummy_names, collapse = ", "),
@@ -3243,9 +3244,9 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 #'
 #' # Using juse() default
 #' juse(mtcars)
-#' jdesc(, mpg)
-#' jdesc(, mpg, hp, wt)
-#' jdesc(, mpg, by = am)
+#' jdesc(mpg)
+#' jdesc(mpg, hp, wt)
+#' jdesc(mpg, by = am)
 #'
 #' # With a vector directly
 #' jdesc(mtcars$mpg)
@@ -3581,8 +3582,8 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = TRUE) {
 #'
 #' # Using juse() default
 #' juse(mtcars)
-#' jfreq(, cyl)
-#' jfreq(, cyl, gear)
+#' jfreq(cyl)
+#' jfreq(cyl, gear)
 #'
 #' # With a vector directly
 #' jfreq(mtcars$gear)
@@ -3807,8 +3808,8 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL) {
 #' # Using juse() default
 #' juse(mtcars)
 #' jscreen()
-#' jscreen(, mpg, hp, wt)
-#' jscreen(, mpg, hp, wt, subset = am == 1)
+#' jscreen(mpg, hp, wt)
+#' jscreen(mpg, hp, wt, subset = am == 1)
 #'
 #' @export
 jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = NULL) {
@@ -5041,7 +5042,7 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
 #'
 #' # Using juse() default
 #' juse(mtcars)
-#' jcorr(, mpg, hp, wt)
+#' jcorr(mpg, hp, wt)
 #'
 #' @importFrom stats cor.test complete.cases
 #' @export
@@ -7170,7 +7171,7 @@ jlogistic <- function(formula, data, subset = NULL, labels = TRUE,
 #'
 #' # Using juse() default
 #' juse(attitude)
-#' jalpha(, rating, complaints, privileges, learning, raises)
+#' jalpha(rating, complaints, privileges, learning, raises)
 #'
 #' @export
 jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
@@ -7482,7 +7483,7 @@ jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
 #'
 #' @return A numeric vector the same length as \code{nrow(data)}, suitable for
 #'   assigning to a new column:
-#'   \code{MyData$Total <- jsum(, Var1, Var2, Var3)}.
+#'   \code{MyData$Total <- jsum(Var1, Var2, Var3)}.
 #'
 #' @examples
 #' \dontrun{
@@ -7490,19 +7491,19 @@ jalpha <- function(data, ..., subset = NULL, labels = TRUE) {
 #' juse(MyData)
 #'
 #' # Sum three variables (all must be non-missing)
-#' MyData$Total <- jsum(, Score1, Score2, Score3)
+#' MyData$Total <- jsum(Score1, Score2, Score3)
 #'
 #' # Sum with partial data allowed (at least 1 non-missing)
-#' MyData$Total <- jsum(, Score1, Score2, Score3, min.valid = 1)
+#' MyData$Total <- jsum(Score1, Score2, Score3, min.valid = 1)
 #'
 #' # Sum using colon range for consecutive columns
-#' MyData$ScaleTotal <- jsum(, Attitude1:Attitude6)
+#' MyData$ScaleTotal <- jsum(Attitude1:Attitude6)
 #'
 #' # Mix colon ranges and explicit names (e.g. after reverse-coding an item)
-#' MyData$ScaleTotal <- jsum(, Attitude1:Attitude3, Attitude4R, Attitude5:Attitude6)
+#' MyData$ScaleTotal <- jsum(Attitude1:Attitude3, Attitude4R, Attitude5:Attitude6)
 #'
 #' # With a custom variable label
-#' MyData$Total <- jsum(, Score1, Score2, Score3,
+#' MyData$Total <- jsum(Score1, Score2, Score3,
 #'                      var_label = "Total Score")
 #'
 #' # With an explicit data frame (instead of using juse default)
@@ -7669,7 +7670,7 @@ jsum <- function(data, ..., min.valid = NULL, var_label = NULL) {
 #'
 #' @return A numeric vector the same length as \code{nrow(data)}, suitable for
 #'   assigning to a new column:
-#'   \code{MyData$ScaleMean <- javg(, Var1, Var2, Var3)}.
+#'   \code{MyData$ScaleMean <- javg(Var1, Var2, Var3)}.
 #'
 #' @examples
 #' \dontrun{
@@ -7677,22 +7678,22 @@ jsum <- function(data, ..., min.valid = NULL, var_label = NULL) {
 #' juse(MyData)
 #'
 #' # Mean of three variables (all must be non-missing)
-#' MyData$Avg <- javg(, Score1, Score2, Score3)
+#' MyData$Avg <- javg(Score1, Score2, Score3)
 #'
 #' # Mean with partial data allowed (at least 1 non-missing)
-#' MyData$Avg <- javg(, Score1, Score2, Score3, min.valid = 1)
+#' MyData$Avg <- javg(Score1, Score2, Score3, min.valid = 1)
 #'
 #' # Mean using colon range for consecutive columns
-#' MyData$ScaleMean <- javg(, Attitude1:Attitude6)
+#' MyData$ScaleMean <- javg(Attitude1:Attitude6)
 #'
 #' # Mix colon ranges and explicit names (e.g. after reverse-coding an item)
-#' MyData$ScaleMean <- javg(, Attitude1:Attitude3, Attitude4R, Attitude5:Attitude6)
+#' MyData$ScaleMean <- javg(Attitude1:Attitude3, Attitude4R, Attitude5:Attitude6)
 #'
 #' # Fixed denominator (always divide by total number of variables)
-#' MyData$Avg <- javg(, Score1, Score2, Score3, min.valid = 1, fixed = TRUE)
+#' MyData$Avg <- javg(Score1, Score2, Score3, min.valid = 1, fixed = TRUE)
 #'
 #' # With a custom variable label
-#' MyData$ScaleMean <- javg(, Attitude1:Attitude6,
+#' MyData$ScaleMean <- javg(Attitude1:Attitude6,
 #'                          var_label = "Scale Mean Score")
 #'
 #' # With an explicit data frame (instead of using juse default)
@@ -7890,7 +7891,7 @@ javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var_label = NULL) {
 #'
 #' # Using juse() default
 #' juse(df)
-#' df$StatusR <- jrelabel(, StatusR, labels = "1=Active; 0=Inactive")
+#' df$StatusR <- jrelabel(StatusR, labels = "1=Active; 0=Inactive")
 #'
 #' @seealso \code{\link{jrecode}} for recoding values with optional labels
 #'   in a single step.
@@ -8109,7 +8110,7 @@ jrelabel <- function(data, var, labels = NULL, var_label = NULL) {
 #'
 #' # Using juse() default
 #' juse(df)
-#' df$gearR6 <- jrecode(, gear, map = "3=1; 4=2; 5=3",
+#' df$gearR6 <- jrecode(gear, map = "3=1; 4=2; 5=3",
 #'                       labels = "1=Three; 2=Four; 3=Five")
 #'
 #' @seealso \code{\link{jrelabel}} for applying labels to an existing variable

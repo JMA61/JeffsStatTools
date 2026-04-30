@@ -62,7 +62,7 @@ df$StatusR <- jrelabel(df, StatusR, labels = "1=Yes; 0=No")
 
 # Using juse() default
 juse(df)
-df$StatusR <- jrelabel(, StatusR, labels = "1=Active; 0=Inactive")
+df$StatusR <- jrelabel(StatusR, labels = "1=Active; 0=Inactive")
 
 }
 \seealso{

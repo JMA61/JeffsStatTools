@@ -46,6 +46,6 @@ jcorr(mtcars, mpg, hp, wt, method = "spearman")
 
 # Using juse() default
 juse(mtcars)
-jcorr(, mpg, hp, wt)
+jcorr(mpg, hp, wt)
 
 }

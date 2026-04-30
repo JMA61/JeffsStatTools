@@ -49,7 +49,7 @@ jscreen(mtcars, outlier.sd = 2.5)
 # Using juse() default
 juse(mtcars)
 jscreen()
-jscreen(, mpg, hp, wt)
-jscreen(, mpg, hp, wt, subset = am == 1)
+jscreen(mpg, hp, wt)
+jscreen(mpg, hp, wt, subset = am == 1)
 
 }

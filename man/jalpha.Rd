@@ -44,6 +44,6 @@ jalpha(attitude, rating, complaints, privileges, learning, raises)
 
 # Using juse() default
 juse(attitude)
-jalpha(, rating, complaints, privileges, learning, raises)
+jalpha(rating, complaints, privileges, learning, raises)
 
 }

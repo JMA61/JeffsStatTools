@@ -9,9 +9,7 @@ jfilter(data, expr)
 \arguments{
 \item{data}{Optional data frame. If supplied, the filter is stored on
 that dataset specifically. If omitted, the dataset set by
-\code{juse()} is used. For consistency with other package functions,
-you can also use a leading comma to skip this argument
-(e.g. \code{jfilter(, Age < 40)}).}
+\code{juse()} is used.}
 
 \item{expr}{A logical expression (e.g. \code{Age < 40 & Gender == 1}),
 or one of the following special values:
@@ -51,7 +49,6 @@ produce a helpful error suggesting the correct R syntax.
 \donttest{
 juse(mtcars)
 jfilter(cyl == 4)             # Set using juse default
-jfilter(, cyl == 4)           # Same as above (leading comma)
 jfilter(mtcars, cyl == 4)     # Explicit dataset
 jfilter(cyl == 4 & mpg > 20)  # Compound condition
 jfilter(off)                  # Deactivate

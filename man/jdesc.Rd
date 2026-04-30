@@ -56,9 +56,9 @@ jdesc(mtcars, mpg, by = am)
 
 # Using juse() default
 juse(mtcars)
-jdesc(, mpg)
-jdesc(, mpg, hp, wt)
-jdesc(, mpg, by = am)
+jdesc(mpg)
+jdesc(mpg, hp, wt)
+jdesc(mpg, by = am)
 
 # With a vector directly
 jdesc(mtcars$mpg)

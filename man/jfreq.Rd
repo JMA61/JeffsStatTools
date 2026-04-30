@@ -55,8 +55,8 @@ jfreq(mtcars, cyl, gear)
 
 # Using juse() default
 juse(mtcars)
-jfreq(, cyl)
-jfreq(, cyl, gear)
+jfreq(cyl)
+jfreq(cyl, gear)
 
 # With a vector directly
 jfreq(mtcars$gear)

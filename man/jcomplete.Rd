@@ -37,8 +37,8 @@ FILTER convention.
 \examples{
 \donttest{
 juse(mtcars)
-jcomplete(, mpg, hp, wt, am)
-jdesc(, mpg)                   # Uses only complete cases on those 4 vars
+jcomplete(mpg, hp, wt, am)
+jdesc(mpg)                     # Uses only complete cases on those 4 vars
 jcomplete(off)                 # Deactivate
 jcomplete(on)                  # Reactivate
 jcomplete()                    # Check status
