@@ -2219,85 +2219,106 @@ jfilter <- function(data, expr) {
   raw_data <- if (!missing(data)) substitute(data) else NULL
   raw_expr <- if (!missing(expr)) substitute(expr) else NULL
 
-  # -- Figure out which form was used ---------------------------------------
-  # Three valid patterns:
-  #   (a) jfilter(<expression>)         -> raw_data is the expression
-  #   (b) jfilter(, <expression>)       -> raw_data is NULL, raw_expr set
-  #   (c) jfilter(DataFrame, <expr>)    -> raw_data is a data.frame
-  # Plus special single-arg forms: jfilter(NULL/off/on) via raw_data.
-
-  # Decide if raw_data looks like a dataset reference or an expression.
-  first_is_df <- FALSE
-  if (!is.null(raw_data)) {
-    first_is_df <- tryCatch(is.data.frame(data), error = function(e) FALSE)
+  # -- jfilter(NULL) — true global clear across all data frames -------------
+  # Mirrors jdummy(NULL) semantics. Ignores the juse default; always
+  # clears every per-data-frame filter setting. The condition
+  # "data was supplied AND substituted expression is NULL" detects the
+  # literal jfilter(NULL) call (cf. missing(data), which is FALSE here).
+  if (!missing(data) && is.null(raw_data)) {
+    all_filters <- getOption(".jst_filter", default = list())
+    if (length(all_filters) == 0) {
+      message("No filters to clear.")
+      return(invisible(NULL))
+    }
+    summary_lines <- character(length(all_filters))
+    for (i in seq_along(all_filters)) {
+      dname <- names(all_filters)[i]
+      fs    <- all_filters[[i]]
+      if (is.null(fs)) {
+        summary_lines[i] <- paste0("  - ", dname, " (no filter)")
+      } else {
+        summary_lines[i] <- paste0("  - ", dname, " (had: ", fs$expr_str, ")")
+      }
+    }
+    options(.jst_filter = NULL)
+    n_frames <- length(all_filters)
+    cat("Cleared filter settings for ", n_frames,
+        " data frame", if (n_frames == 1L) "" else "s", ":\n", sep = "")
+    cat(paste(summary_lines, collapse = "\n"), "\n", sep = "")
+    return(invisible(NULL))
   }
 
-  target_name <- NULL
-  filter_raw  <- NULL
+  # -- jfilter(off) / jfilter(on) — default-scoped --------------------------
+  # Symbol checks happen on raw_data BEFORE the helper, since `off` and
+  # `on` aren't real R objects and would fail evaluation.
+  if (!is.null(raw_data) && is.symbol(raw_data) && missing(expr)) {
+    sym_name <- tolower(as.character(raw_data))
+    default_name <- getOption(".jst_default_data", default = NULL)
+    if (sym_name == "off") {
+      if (is.null(default_name)) {
+        message("No default data frame set.")
+        return(invisible(NULL))
+      }
+      fs <- .jst_get_filter(default_name)
+      if (is.null(fs)) {
+        message("No filter set for ", default_name, ". Nothing to deactivate.")
+      } else {
+        fs$active <- FALSE
+        .jst_set_filter(default_name, fs)
+        message("Filter deactivated for ", default_name, ".")
+      }
+      return(invisible(NULL))
+    }
+    if (sym_name == "on") {
+      if (is.null(default_name)) {
+        message("No default data frame set.")
+        return(invisible(NULL))
+      }
+      fs <- .jst_get_filter(default_name)
+      if (is.null(fs)) {
+        message("No filter set for ", default_name,
+                ". Use jfilter(expression) to set one.")
+      } else {
+        fs$active <- TRUE
+        .jst_set_filter(default_name, fs)
+        message("Filter reactivated for ", default_name, ": ", fs$expr_str)
+      }
+      return(invisible(NULL))
+    }
+  }
 
-  if (first_is_df) {
-    # Pattern (c): explicit dataset + expression (which may be NULL to clear)
-    target_name <- deparse(raw_data)
+  # -- Resolve which arg is the data and which is the filter expression -----
+  # Uses the standard helper. For jfilter, the helper distinguishes:
+  #   explicit            : raw_data is a data frame  -> raw_expr is the filter
+  #   default             : missing(data)             -> raw_expr is the filter
+  #   symbol_with_default : raw_data is the filter    -> juse default + raw_data
+  arg1 <- .jst_resolve_first_arg(
+    data_sub      = raw_data,
+    data_missing  = missing(data),
+    fn_name       = "jfilter",
+    envir         = parent.frame(),
+    accept_vector = FALSE
+  )
+
+  target_name <- arg1$name
+
+  if (arg1$mode == "explicit") {
+    # jfilter(SampleData, <expr>) — explicit data frame + expression slot
     if (missing(expr)) {
       stop("jfilter(", target_name, ", ...) requires a filter expression. ",
            "Example: jfilter(", target_name, ", Age < 40)", call. = FALSE)
     }
     filter_raw <- raw_expr
-  } else if (!missing(expr)) {
-    # Pattern (b): leading comma, use juse default
-    target_name <- getOption(".jst_default_data", default = NULL)
-    filter_raw  <- raw_expr
+  } else if (arg1$mode == "default") {
+    # jfilter(, <expr>) — leading comma + juse default
+    if (is.null(raw_expr)) {
+      stop("jfilter(): no filter expression supplied. ",
+           "Example: jfilter(, Age < 40)", call. = FALSE)
+    }
+    filter_raw <- raw_expr
   } else {
-    # Pattern (a) or single-arg special form: raw_data holds the expression
-    target_name <- getOption(".jst_default_data", default = NULL)
-    filter_raw  <- raw_data
-  }
-
-  # -- jfilter(NULL) — clear ------------------------------------------------
-  if (is.null(filter_raw)) {
-    if (!is.null(target_name)) {
-      .jst_set_filter(target_name, NULL)
-      message("Filter cleared for ", target_name, ".")
-    } else {
-      message("No default data frame set. Nothing to clear.")
-    }
-    return(invisible(NULL))
-  }
-
-  # -- jfilter(off) / jfilter(on) -------------------------------------------
-  if (is.symbol(filter_raw)) {
-    sym_name <- tolower(as.character(filter_raw))
-    if (sym_name == "off") {
-      if (is.null(target_name)) {
-        message("No default data frame set.")
-        return(invisible(NULL))
-      }
-      fs <- .jst_get_filter(target_name)
-      if (is.null(fs)) {
-        message("No filter set for ", target_name, ". Nothing to deactivate.")
-      } else {
-        fs$active <- FALSE
-        .jst_set_filter(target_name, fs)
-        message("Filter deactivated for ", target_name, ".")
-      }
-      return(invisible(NULL))
-    }
-    if (sym_name == "on") {
-      if (is.null(target_name)) {
-        message("No default data frame set.")
-        return(invisible(NULL))
-      }
-      fs <- .jst_get_filter(target_name)
-      if (is.null(fs)) {
-        message("No filter set for ", target_name,
-                ". Use jfilter(expression) to set one.")
-      } else {
-        fs$active <- TRUE
-        .jst_set_filter(target_name, fs)
-        message("Filter reactivated for ", target_name, ": ", fs$expr_str)
-      }
-      return(invisible(NULL))
-    }
+    # symbol_with_default — jfilter(<expr>) bare-expression form
+    filter_raw <- arg1$first_arg_sub
   }
 
   # -- Detect common syntax mistakes before trying to evaluate --------------
@@ -2305,12 +2326,6 @@ jfilter <- function(data, expr) {
   .jst_check_filter_syntax(filter_raw, expr_str_for_check)
 
   # -- Set and activate the filter -----------------------------------------
-  if (is.null(target_name)) {
-    stop("No default data frame set. Either call juse() first, or pass a ",
-         "data frame explicitly: jfilter(MyData, <expression>).",
-         call. = FALSE)
-  }
-
   expr_str <- deparse(filter_raw, width.cutoff = 500)
   .jst_set_filter(target_name, list(
     expr     = filter_raw,
@@ -2484,11 +2499,46 @@ jcomplete <- function(data, ...) {
   }
 
   # -- Capture substitute BEFORE any evaluation ------------------------------
-  # This must happen before is.null(data) or any other use of data,
-  # otherwise bare symbols like off/on cause "object not found" errors.
+  # Must happen before is.null(data) or any other use of data, otherwise
+  # bare symbols like off/on cause "object not found" errors.
   raw_data <- if (!missing(data)) substitute(data) else NULL
 
-  # -- jcomplete(off) / jcomplete(on) — check BEFORE evaluating data --------
+  # -- jcomplete(NULL) — true global clear across all data frames -----------
+  # Mirrors jdummy(NULL) and jfilter(NULL) semantics. Ignores juse default;
+  # always clears every per-data-frame jcomplete setting. The condition
+  # "data was supplied AND substituted expression is NULL" detects the
+  # literal jcomplete(NULL) call.
+  if (!missing(data) && is.null(raw_data)) {
+    all_complete <- getOption(".jst_complete", default = list())
+    if (length(all_complete) == 0) {
+      message("No jcomplete settings to clear.")
+      return(invisible(NULL))
+    }
+    summary_lines <- character(length(all_complete))
+    for (i in seq_along(all_complete)) {
+      dname <- names(all_complete)[i]
+      cs    <- all_complete[[i]]
+      if (is.null(cs)) {
+        summary_lines[i] <- paste0("  - ", dname, " (no settings)")
+      } else {
+        summary_lines[i] <- paste0(
+          "  - ", dname, " (had: ", paste(cs$vars, collapse = ", "), ")"
+        )
+      }
+    }
+    options(.jst_complete = NULL)
+    n_frames <- length(all_complete)
+    cat("Cleared jcomplete settings for ", n_frames,
+        " data frame", if (n_frames == 1L) "" else "s", ":\n", sep = "")
+    cat(paste(summary_lines, collapse = "\n"), "\n", sep = "")
+    return(invisible(NULL))
+  }
+
+  # -- jcomplete(off) / jcomplete(on) — default-scoped ----------------------
+  # Symbol checks happen on raw_data BEFORE the helper, since `off` and
+  # `on` aren't real R objects and would fail evaluation. The
+  # ...length() == 0 guard avoids interpreting a variable named "off"
+  # accompanied by other variables as the off command.
   if (!is.null(raw_data) && is.symbol(raw_data) && ...length() == 0) {
     sym_name <- tolower(as.character(raw_data))
     if (sym_name == "off") {
@@ -2514,7 +2564,7 @@ jcomplete <- function(data, ...) {
       cs <- .jst_get_complete(default_name)
       if (is.null(cs)) {
         message("No jcomplete filter set for ", default_name,
-                ". Use jcomplete(, var1, var2, ...) to set one.")
+                ". Use jcomplete(var1, var2, ...) to set one.")
       } else {
         cs$active <- TRUE
         .jst_set_complete(default_name, cs)
@@ -2524,39 +2574,37 @@ jcomplete <- function(data, ...) {
     }
   }
 
-  # -- Now safe to evaluate data ---------------------------------------------
-  if (!missing(data)) {
-    data <- force(data)
+  # -- Resolve the first argument via the standard helper -------------------
+  # Three modes possible at this point:
+  #   explicit            : jcomplete(SampleData, v1, v2)  - data is a frame
+  #   default             : jcomplete(, v1, v2)            - leading-comma form
+  #   symbol_with_default : jcomplete(v1, v2, v3)          - bare-symbol form
+  arg1 <- .jst_resolve_first_arg(
+    data_sub      = raw_data,
+    data_missing  = missing(data),
+    fn_name       = "jcomplete",
+    envir         = parent.frame(),
+    accept_vector = FALSE
+  )
+
+  data              <- arg1$data
+  .jst_data_name    <- arg1$name
+  .jst_default_used <- arg1$mode %in% c("default", "symbol_with_default")
+
+  variables <- rlang::enquos(...)
+
+  # Bare-symbol form: prepend the captured first symbol to the variables list
+  if (arg1$mode == "symbol_with_default") {
+    extra_quo <- rlang::new_quosure(arg1$first_arg_sub,
+                                    env = parent.frame())
+    variables <- c(list(extra_quo), variables)
+    class(variables) <- "quosures"
   }
 
-  # -- jcomplete(NULL) — clear -----------------------------------------------
-  if (!missing(data) && is.null(data)) {
-    if (!is.null(default_name)) {
-      .jst_set_complete(default_name, NULL)
-      message("jcomplete filter cleared for ", default_name, ".")
-    } else {
-      message("No default data frame set. Nothing to clear.")
-    }
-    return(invisible(NULL))
-  }
-
-  # -- jcomplete(, var1, var2, ...) — set and activate -----------------------
-
-  # Resolve data frame
-  .jst_data_name <- NULL
-  if (missing(data)) {
-    resolved <- .jst_resolve_data(envir = parent.frame())
-    data <- resolved$data
-    .jst_data_name <- resolved$name
-  } else {
-    .jst_data_name <- paste(deparse(raw_data), collapse = "")
-  }
-
-  variables      <- rlang::enquos(...)
   variable_names <- vapply(variables, rlang::quo_name, character(1))
 
   if (length(variable_names) == 0) {
-    stop("Provide at least one variable name, e.g. jcomplete(, DV, IV1, IV2).",
+    stop("Provide at least one variable name, e.g. jcomplete(DV, IV1, IV2).",
          call. = FALSE)
   }
 
@@ -2583,7 +2631,7 @@ jcomplete <- function(data, ...) {
 
   # Print summary
   .cat_red("Listwise Case Filter\n")
-  .jst_default_note(.jst_data_name, extra_newline = TRUE)
+  if (.jst_default_used) .jst_default_note(.jst_data_name, extra_newline = TRUE)
 
   .jst_print_table(missing_info,
                    col.names = c("Variable", "N", "Missing", "% Missing"),
@@ -2592,9 +2640,10 @@ jcomplete <- function(data, ...) {
   cat("\n  Complete cases: ", n_complete, " of ", n_total,
       " (", sprintf("%.1f", n_complete / n_total * 100), "%)\n", sep = "")
   if (n_excluded > 0) {
-    cat("  Listwise filter activated \u2014 ", n_excluded, " cases excluded.\n", sep = "")
+    cat("  Listwise filter activated \u2014 ", n_excluded,
+        " cases will be excluded from subsequent analyses.\n", sep = "")
   } else {
-    cat("  Listwise filter activated \u2014 no cases excluded (no missing values).\n")
+    cat("  Listwise filter activated \u2014 no cases will be excluded (no missing values).\n")
   }
 
   invisible(NULL)
