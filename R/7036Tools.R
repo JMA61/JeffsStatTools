@@ -1703,7 +1703,14 @@
 #' @keywords internal
 .jst_detect_suspicious_values <- function(x, var_name) {
 
-  vals <- unique(as.numeric(x[!is.na(x)]))
+  # unclass() strips haven_labelled / vctrs_vctr wrappers and returns the
+  # underlying double values unchanged, sidestepping a vctrs dispatch
+  # ordering issue where as.numeric() on a haven_labelled subset can fail
+  # in sessions where readxl was loaded before haven's vec_cast method
+  # registered into vctrs's dispatch table. Class-neutral for non-haven
+  # input — unclass() of a plain numeric is a no-op, and unclass() of a
+  # factor returns the integer codes that as.numeric(factor) already used.
+  vals <- unique(as.numeric(unclass(x)[!is.na(x)]))
   if (length(vals) < 2) return(numeric(0))
 
   suspicious <- numeric(0)
@@ -8503,7 +8510,10 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
   )
 
   # --- Apply recode ---
-  orig_num  <- as.numeric(orig)
+  # unclass() bypasses vctrs's "Can't convert <haven_labelled> to <double>"
+  # cast refusal; underlying double values are preserved unchanged. See the
+  # matching note in .jst_detect_suspicious_values() for full context.
+  orig_num  <- as.numeric(unclass(orig))
   new_num   <- rep(NA_real_, length(orig_num))
 
   all_specified_old <- c()
