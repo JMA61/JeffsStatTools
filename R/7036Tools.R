@@ -272,6 +272,19 @@
       !identical(rownames(df), as.character(seq_len(nrow(df))))) {
     display <- cbind(rownames(df), display)
     headers <- c("", headers)
+    # If the caller passed an explicit align vector sized for the data
+    # columns only, prepend "l" so the row-names column gets left-
+    # justification and the rest shift into the right slots. Without
+    # this, align[1] would silently absorb the row-names column (causing
+    # variable names to be centered when the caller intended "c" for the
+    # first data column) and align[n_displayed_cols] would be NA
+    # (causing the last column to fall through to the default left
+    # alignment). Skip the prepend if the caller already supplied a
+    # vector matching the displayed-column count, on the assumption they
+    # did so deliberately.
+    if (!is.null(align) && length(align) == ncol(df)) {
+      align <- c("l", align)
+    }
   }
 
   n_cols <- ncol(display)
@@ -1065,16 +1078,25 @@
 #   NULL  - "auto": print CPS only when something happened (any pipeline
 #           state active, or for listwise=TRUE callers, listwise excluded
 #           at least one case)
+#
+# udm.notice supports three states:
+#   FALSE - never print the UDM narrative on jload
+#   TRUE  - always print the narrative (every .sav load with UDMs)
+#   NULL  - "auto": print once per session, then suppress (tracked via
+#           the .jst_udm_notice_shown option)
 .jst_output_defaults <- list(
   minimal  = list(effect.size = FALSE, ci = FALSE, levene = FALSE,
                   posthoc = FALSE, missing = FALSE, diagnostics = FALSE,
-                  case.processing = FALSE, var.labels = FALSE, ref.categories = FALSE),
+                  case.processing = FALSE, var.labels = FALSE, ref.categories = FALSE,
+                  udm.notice = FALSE),
   standard = list(effect.size = TRUE,  ci = TRUE,  levene = FALSE,
                   posthoc = FALSE, missing = FALSE, diagnostics = FALSE,
-                  case.processing = NULL,  var.labels = TRUE,  ref.categories = TRUE),
+                  case.processing = NULL,  var.labels = TRUE,  ref.categories = TRUE,
+                  udm.notice = NULL),
   full     = list(effect.size = TRUE,  ci = TRUE,  levene = TRUE,
                   posthoc = TRUE,  missing = TRUE,  diagnostics = TRUE,
-                  case.processing = TRUE,  var.labels = TRUE,  ref.categories = TRUE)
+                  case.processing = TRUE,  var.labels = TRUE,  ref.categories = TRUE,
+                  udm.notice = TRUE)
 )
 
 #' Internal helper: resolve a display toggle value
@@ -1716,7 +1738,16 @@
   suspicious <- numeric(0)
 
   # Rule 1: negative values when all others are positive AND
-  # the absolute magnitude is at least 3x the max positive value
+  # the absolute magnitude is at least 3x the max positive value.
+  # NOTE: deliberately conservative — misses missing-value codes like
+  # -99 in variables with naturally high positives (e.g., Age 18-80
+  # would not flag -99 because 99 < 3 * 80 = 240). Trade-off: better
+  # to miss a sentinel that the user can spot from jload's output than
+  # to flag a real extreme value as suspicious. The SPSS-defined UDM
+  # detector (.jst_scan_coded_missing's na_values branch) catches
+  # these cases when haven metadata is preserved; the heuristic is
+  # the safety net for plain numerics where metadata has been stripped
+  # (e.g., post-csv/xlsx/dta load).
   neg_vals <- vals[vals < 0]
   pos_vals <- vals[vals >= 0]
 
@@ -3413,6 +3444,13 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 #'   the variable labels block.
 #' @param ref.categories Logical or NULL. Override the level's default
 #'   for the reference categories block (registered dummies).
+#' @param udm.notice Three-state toggle controlling the user-defined
+#'   missing-value (UDM) notification emitted by \code{jload()} for
+#'   \code{.sav} files. \code{TRUE} prints the notification on every
+#'   load that involves UDM-bearing variables; \code{FALSE} suppresses
+#'   it entirely; \code{NULL} ("auto") prints it only the first time
+#'   in a session, then suppresses it. Standard level uses \code{NULL}
+#'   (auto), minimal uses \code{FALSE}, full uses \code{TRUE}.
 #'
 #' @return Invisibly returns NULL. Called for its side effect of setting
 #'   session options.
@@ -3431,7 +3469,7 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
                     posthoc = NULL, missing = NULL, diagnostics = NULL,
                     case.processing = NULL, var.labels = NULL,
-                    ref.categories = NULL) {
+                    ref.categories = NULL, udm.notice = NULL) {
 
   valid_levels <- c("minimal", "standard", "full")
 
@@ -3455,6 +3493,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
   if (!is.null(case.processing)) toggle_args$case.processing <- case.processing
   if (!is.null(var.labels))      toggle_args$var.labels      <- var.labels
   if (!is.null(ref.categories))  toggle_args$ref.categories  <- ref.categories
+  if (!is.null(udm.notice))      toggle_args$udm.notice      <- udm.notice
 
   # joutput() with no level argument -- show status or apply toggles only
   if (missing(level)) {
@@ -3499,7 +3538,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 
   # Show effective value for each toggle
   toggle_names <- c("effect.size", "ci", "levene", "posthoc", "missing", "diagnostics",
-                    "case.processing", "var.labels", "ref.categories")
+                    "case.processing", "var.labels", "ref.categories", "udm.notice")
   defaults     <- .jst_output_defaults[[level]]
 
   for (nm in toggle_names) {
@@ -3507,7 +3546,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
     effective    <- if (nm %in% names(toggles)) toggles[[nm]] else default_val
     override_str <- if (nm %in% names(toggles)) " (override)" else ""
 
-    # case.processing supports three states (TRUE/FALSE/NULL=AUTO);
+    # case.processing and udm.notice support three states (TRUE/FALSE/NULL=AUTO);
     # other toggles are binary.
     label <- if (is.null(effective)) {
       "AUTO"
@@ -8572,13 +8611,47 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
     }
   }
 
-  # Print note about suspicious values that were forced to NA
+  # Print note about suspicious values that were forced to NA.
+  # Partition by source so the wording matches what we actually know:
+  #   - Values present in the variable's na_values metadata are UDM-
+  #     confirmed and get definitive "is a user-defined missing value"
+  #     wording.
+  #   - Values flagged only by the heuristic get tentative "looks like
+  #     a coded missing value" wording.
+  # This avoids underspeaking when the user has already seen the UDM
+  # noted at jload time. See Session 22 changelog ("Problem A") for the
+  # design discussion.
   if (length(suspicious_unspecified) > 0) {
-    message(paste0(
-      "Note: ", paste(suspicious_unspecified, collapse = ", "),
-      " in '", orig_name,
-      "' looks like a coded missing value and was set to NA."
-    ))
+    udm_codes <- attr(orig, "na_values", exact = TRUE)
+    if (is.null(udm_codes)) udm_codes <- numeric(0)
+
+    udm_unspecified  <- suspicious_unspecified[suspicious_unspecified %in% udm_codes]
+    heur_unspecified <- suspicious_unspecified[!suspicious_unspecified %in% udm_codes]
+
+    .verb_phrase <- function(n, singular, plural) if (n == 1L) singular else plural
+
+    if (length(udm_unspecified) > 0) {
+      vp <- .verb_phrase(
+        length(udm_unspecified),
+        "is a user-defined missing value and was set to NA",
+        "are user-defined missing values and were set to NA"
+      )
+      message(paste0(
+        "Note: ", paste(udm_unspecified, collapse = ", "),
+        " in '", orig_name, "' ", vp, "."
+      ))
+    }
+    if (length(heur_unspecified) > 0) {
+      vp <- .verb_phrase(
+        length(heur_unspecified),
+        "looks like a coded missing value and was set to NA",
+        "look like coded missing values and were set to NA"
+      )
+      message(paste0(
+        "Note: ", paste(heur_unspecified, collapse = ", "),
+        " in '", orig_name, "' ", vp, "."
+      ))
+    }
   }
 
   # NAs in original are always NA in output
@@ -8712,6 +8785,20 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
 #'   name (character) or sheet number (integer). Defaults to the first sheet.
 #'   If the file has multiple sheets and \code{sheet} is not specified,
 #'   a message lists the available sheets.
+#' @param preserve_udm Logical. For SPSS \code{.sav} files only. If
+#'   \code{TRUE} (default), user-defined missing-value (UDM) codes such as
+#'   -99 are preserved as their original numeric values in the data frame,
+#'   with metadata attached so the package's analysis functions still treat
+#'   them as missing. If \code{FALSE}, UDM codes are converted to plain
+#'   \code{NA} on import and the metadata is stripped (matching haven's
+#'   default \code{user_na = FALSE} behaviour). Has no effect on non-SPSS
+#'   formats. Corresponds to haven's \code{user_na} argument with the same
+#'   semantics when set to \code{TRUE}.
+#' @param udm.notice Per-call override for the UDM notification frequency.
+#'   \code{NULL} (default) defers to the global setting from \code{joutput()}.
+#'   \code{TRUE} prints the notification on every load; \code{FALSE}
+#'   suppresses it; \code{NULL} at the global level shows once per session.
+#'   See \code{?joutput} for the full toggle behaviour.
 #'
 #' @return Invisibly returns the loaded data frame. The primary effect is
 #'   assigning the data frame in the calling environment.
@@ -8791,7 +8878,8 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
 #'
 #' @export
 jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
-                  check.missing = TRUE, sheet = NULL) {
+                  check.missing = TRUE, sheet = NULL,
+                  preserve_udm = TRUE, udm.notice = NULL) {
 
   # --- Validate file argument ------------------------------------------------
   if (missing(file) || !is.character(file) || length(file) != 1 ||
@@ -8832,12 +8920,12 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
                               paste0(search_dirs, " folder")),
                        collapse = " and "))
         else
-          paste0("Searched in: ", dirname(file)),
+          paste0("Searched in: ", .jst_norm_path(dirname(file))),
         call. = FALSE
       )
     }
     if (length(found) == 1) {
-      message("Found ", basename(found), " in ", dirname(found), "/")
+      message("Found ", basename(found), " in ", .jst_norm_path(dirname(found)))
       file    <- found
       ext     <- tolower(tools::file_ext(file))
       has_dir <- TRUE
@@ -8872,7 +8960,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     # Full or relative path provided — use directly
     resolved_path <- file
     if (!file.exists(resolved_path)) {
-      stop("File not found: ", resolved_path, call. = FALSE)
+      stop("File not found: ", .jst_norm_path(resolved_path), call. = FALSE)
     }
   } else {
     # Bare filename — search Data/, data/, then working directory
@@ -8931,8 +9019,11 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   }
 
   # --- Read the file ---------------------------------------------------------
+  # For .sav: always pass user_na = TRUE so UDM metadata is available for
+  # the .jst_handle_udms step below, regardless of preserve_udm. The package
+  # then decides whether to preserve or convert based on preserve_udm.
   df <- switch(ext,
-               sav      = haven::read_sav(resolved_path),
+               sav      = haven::read_sav(resolved_path, user_na = TRUE),
                dta      = haven::read_dta(resolved_path),
                sas7bdat = haven::read_sas(resolved_path),
                xpt      = haven::read_xpt(resolved_path),
@@ -8973,6 +9064,19 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     df <- as.data.frame(df)
   }
 
+  # --- Handle UDMs (SPSS .sav only) ------------------------------------------
+  # Read above always passes user_na = TRUE for .sav, so UDM metadata is
+  # available regardless of preserve_udm. Here we either keep that metadata
+  # (preserve_udm = TRUE) or convert UDM cells to NA and strip the metadata
+  # (preserve_udm = FALSE). Either way we capture per-variable info for the
+  # narrative notification.
+  udm_info <- list()
+  if (ext == "sav") {
+    udm_result <- .jst_handle_udms(df, preserve_udm)
+    df         <- udm_result$df
+    udm_info   <- udm_result$udm_info
+  }
+
   # --- Assign to environment -------------------------------------------------
   assign(obj_name, df, envir = target_env)
 
@@ -8989,9 +9093,34 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     message("Default data frame set to: ", obj_name)
   }
 
+  # --- UDM narrative notification (.sav only) --------------------------------
+  # Toggle resolution: per-call udm.notice arg > joutput global toggle >
+  # joutput level default. NULL at the resolved level means "auto" = show
+  # once per session (tracked via .jst_udm_notice_shown option).
+  if (length(udm_info) > 0) {
+    notice_setting <- .jst_resolve_toggle("udm.notice", udm.notice)
+    show_notice <- if (isTRUE(notice_setting)) {
+      TRUE
+    } else if (identical(notice_setting, FALSE)) {
+      FALSE
+    } else {
+      # NULL / auto mode — show only if not yet shown this session
+      !isTRUE(getOption(".jst_udm_notice_shown", FALSE))
+    }
+    if (show_notice) {
+      message(.jst_format_udm_narrative(udm_info, preserve_udm))
+      options(.jst_udm_notice_shown = TRUE)
+    }
+  }
+
   # --- Coded missing value scan ----------------------------------------------
+  # For .sav loads, UDMs were already handled above; pass scan_udm = FALSE
+  # to skip the na_values/na_range tabular lines (the narrative replaces them).
+  # For other formats, scan_udm = TRUE preserves the existing behaviour, which
+  # picks up haven_labelled_spss columns that may have arrived via .rds round-
+  # trip or R-side construction.
   if (check.missing) {
-    .jst_scan_coded_missing(df, obj_name, ext)
+    .jst_scan_coded_missing(df, obj_name, ext, scan_udm = (ext != "sav"))
   }
 
   invisible(df)
@@ -8999,6 +9128,187 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 
 
 # -- jload internal helpers ---------------------------------------------------
+
+#' Internal: normalize a path for display in user-facing messages
+#'
+#' \code{winslash = "/"} forces forward slashes (avoiding the Windows
+#' backslash/forward-slash mix that arises when paths from
+#' \code{tempdir()} etc. are joined with \code{file.path()} output).
+#' \code{mustWork = FALSE} allows the call to succeed for paths that
+#' do not yet exist (relevant for jsave's pre-write context). Falls
+#' back to the input unchanged on any error.
+#'
+#' @keywords internal
+.jst_norm_path <- function(p) {
+  tryCatch(
+    normalizePath(p, winslash = "/", mustWork = FALSE),
+    error = function(e) p
+  )
+}
+
+#' Internal: inspect a data frame for UDM-bearing columns and optionally
+#' convert UDM cells to NA
+#'
+#' Walks the columns of \code{df} looking for \code{na_values} and
+#' \code{na_range} attributes (the haven_labelled_spss UDM metadata).
+#' For each column with UDMs, captures the variable name, codes, and
+#' value labels into a list entry used downstream by the narrative
+#' formatter. When \code{preserve_udm = FALSE}, additionally converts
+#' UDM cells to \code{NA} and strips the \code{na_values} and
+#' \code{na_range} attributes (the haven_labelled / haven_labelled_spss
+#' class is left in place; the package's analysis functions handle both
+#' classes correctly via the existing classifier).
+#'
+#' @return A list with elements \code{df} (possibly modified) and
+#'   \code{udm_info} (list of per-variable info; empty list if none found).
+#'
+#' @keywords internal
+.jst_handle_udms <- function(df, preserve_udm) {
+  udm_info <- list()
+
+  for (vname in names(df)) {
+    col      <- df[[vname]]
+    na_vals  <- attr(col, "na_values")
+    na_range <- attr(col, "na_range")
+
+    has_udms <- (!is.null(na_vals)  && length(na_vals)  > 0) ||
+                (!is.null(na_range) && length(na_range) == 2)
+    if (!has_udms) next
+
+    val_labs <- if (haven::is.labelled(col)) labelled::val_labels(col) else NULL
+
+    udm_info[[length(udm_info) + 1]] <- list(
+      var      = vname,
+      na_vals  = na_vals,
+      na_range = na_range,
+      val_labs = val_labs
+    )
+
+    if (!preserve_udm) {
+      # unclass() bypasses vctrs's "Can't convert <haven_labelled> to <double>"
+      # cast refusal in cold-session vec_cast dispatch ordering. See the matching
+      # note in .jst_detect_suspicious_values() for full context.
+      x_num <- suppressWarnings(as.numeric(unclass(col)))
+      mask  <- rep(FALSE, length(x_num))
+
+      if (!is.null(na_vals) && length(na_vals) > 0) {
+        mask <- mask | (!is.na(x_num) & x_num %in% as.numeric(na_vals))
+      }
+      if (!is.null(na_range) && length(na_range) == 2) {
+        mask <- mask | (!is.na(x_num) & x_num >= na_range[1] & x_num <= na_range[2])
+      }
+
+      df[[vname]][mask] <- NA
+      attr(df[[vname]], "na_values") <- NULL
+      attr(df[[vname]], "na_range")  <- NULL
+    }
+  }
+
+  list(df = df, udm_info = udm_info)
+}
+
+#' Internal: format the UDM narrative notification text
+#'
+#' Builds the message string emitted when UDM-bearing variables are
+#' detected during a \code{.sav} load. Wording differs depending on
+#' whether the UDMs were preserved (\code{preserve_udm = TRUE}) or
+#' converted (\code{preserve_udm = FALSE}). Variable list is truncated
+#' at \code{max_show} entries with an "...and N more" tail.
+#'
+#' @keywords internal
+.jst_format_udm_narrative <- function(udm_info, preserve_udm, max_show = 10L) {
+  n_vars <- length(udm_info)
+  if (n_vars == 0) return(NULL)
+
+  show_n <- min(n_vars, max_show)
+  var_strings <- character(show_n)
+
+  for (i in seq_len(show_n)) {
+    info  <- udm_info[[i]]
+    parts <- character(0)
+
+    if (!is.null(info$na_vals) && length(info$na_vals) > 0) {
+      val_strs <- character(length(info$na_vals))
+      for (j in seq_along(info$na_vals)) {
+        v <- as.numeric(info$na_vals[j])
+
+        # Find the value label, if any
+        lbl <- NULL
+        if (!is.null(info$val_labs) && length(info$val_labs) > 0) {
+          lbl_idx <- which(suppressWarnings(as.numeric(info$val_labs)) == v)
+          if (length(lbl_idx) > 0) lbl <- names(info$val_labs)[lbl_idx[1]]
+        }
+
+        val_strs[j] <- if (!is.null(lbl) && nzchar(lbl)) {
+          sprintf('%s ["%s"]', format(v), lbl)
+        } else {
+          sprintf('%s (no label)', format(v))
+        }
+      }
+      parts <- c(parts, paste(val_strs, collapse = ", "))
+    }
+
+    if (!is.null(info$na_range) && length(info$na_range) == 2) {
+      parts <- c(parts, sprintf("range %s to %s",
+                                format(info$na_range[1]),
+                                format(info$na_range[2])))
+    }
+
+    body <- paste(parts, collapse = "; ")
+    if (!preserve_udm) body <- paste0("was ", body)
+
+    var_strings[i] <- sprintf("%s: %s", info$var, body)
+  }
+
+  list_str <- paste(var_strings, collapse = "; ")
+  if (n_vars > max_show) {
+    list_str <- paste0(list_str, "; ...and ", n_vars - max_show, " more")
+  }
+
+  if (preserve_udm) {
+    sprintf(
+      paste0(
+        "%d variables have user-defined missing-value codes preserved from the .sav ",
+        "file (%s). These codes appear as their original numeric values in the ",
+        "dataframe but are treated as NA in analysis functions. To convert them to ",
+        "plain NA on import instead, use jload(file, preserve_udm = FALSE)."
+      ),
+      n_vars, list_str
+    )
+  } else {
+    sprintf(
+      paste0(
+        "%d variables had user-defined missing-value codes; these have been converted ",
+        "to plain NA per preserve_udm = FALSE (%s). To preserve them as their ",
+        "original numeric values instead, use jload(file, preserve_udm = TRUE)."
+      ),
+      n_vars, list_str
+    )
+  }
+}
+
+#' Internal: detect tagged-NA-bearing columns in a data frame
+#'
+#' Returns the names of variables where any cell is a tagged NA
+#' (\code{haven::tagged_na("a")}, \code{tagged_na("b")}, ...).
+#' Used by jsave's pre-flight check before writing to formats that
+#' do not support tagged NAs (notably .sav). Tagged NAs only exist
+#' in numeric/double vectors, so non-numeric columns are skipped.
+#'
+#' @keywords internal
+.jst_has_tagged_na <- function(data) {
+  affected <- character(0)
+  for (vname in names(data)) {
+    col <- data[[vname]]
+    if (!is.numeric(col)) next
+    has_tagged <- tryCatch(
+      any(haven::is_tagged_na(col)),
+      error = function(e) FALSE
+    )
+    if (isTRUE(has_tagged)) affected <- c(affected, vname)
+  }
+  affected
+}
 
 #' Internal: search for a file without extension across supported formats
 #' @keywords internal
@@ -9049,7 +9359,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     candidate <- file.path(d, filename)
     if (file.exists(candidate)) {
       if (d != ".") {
-        message("Reading from ", d, "/")
+        message("Reading from ", .jst_norm_path(d))
       }
       return(candidate)
     }
@@ -9066,10 +9376,18 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 }
 
 #' Internal: scan for coded missing values and report findings
+#'
+#' @param scan_udm Logical. When \code{FALSE}, the haven \code{na_values}
+#'   and \code{na_range} branches are skipped (only the suspicious-values
+#'   heuristic runs). Set to \code{FALSE} when called after
+#'   \code{.jst_handle_udms()} has already produced its narrative for
+#'   \code{.sav} loads, to avoid duplicate output.
+#'
 #' @keywords internal
-.jst_scan_coded_missing <- function(df, obj_name, ext) {
+.jst_scan_coded_missing <- function(df, obj_name, ext, scan_udm = TRUE) {
 
-  max_report <- 20L  # Maximum number of rows to display
+  max_report <- 10L  # Maximum number of rows to display (harmonized with
+                     # the narrative cap in .jst_format_udm_narrative)
 
   # Collect findings: list of lists with var, value, count, source
   findings <- list()
@@ -9084,38 +9402,42 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     # --- Check SPSS user-defined missing values (haven attribute) ---
     # SPSS-defined missings are checked on ALL values (including decimals)
     # because SPSS allows any value to be defined as missing.
-    spss_na_vals <- attr(col, "na_values")
-    spss_na_range <- attr(col, "na_range")
+    # Skipped (scan_udm = FALSE) when called from jload after the
+    # narrative notification has already covered UDMs for .sav loads.
+    if (scan_udm) {
+      spss_na_vals <- attr(col, "na_values")
+      spss_na_range <- attr(col, "na_range")
 
-    if (!is.null(spss_na_vals)) {
-      for (sv in spss_na_vals) {
-        n_cases <- sum(num_vals == sv, na.rm = TRUE)
-        if (n_cases > 0) {
-          findings[[length(findings) + 1]] <- list(
-            var = vname, value = sv, count = n_cases,
-            source = "defined as missing in original SPSS file"
-          )
+      if (!is.null(spss_na_vals)) {
+        for (sv in spss_na_vals) {
+          n_cases <- sum(num_vals == sv, na.rm = TRUE)
+          if (n_cases > 0) {
+            findings[[length(findings) + 1]] <- list(
+              var = vname, value = sv, count = n_cases,
+              source = "user-defined missing value"
+            )
+          }
         }
       }
-    }
 
-    if (!is.null(spss_na_range)) {
-      range_lo <- spss_na_range[1]
-      range_hi <- spss_na_range[2]
-      range_match <- !is.na(num_vals) & num_vals >= range_lo & num_vals <= range_hi
-      if (any(range_match)) {
-        range_vals <- sort(unique(num_vals[range_match]))
-        for (rv in range_vals) {
-          # Skip if already found via na_values
-          already <- any(vapply(findings, function(f) {
-            f$var == vname && f$value == rv
-          }, logical(1)))
-          if (!already) {
-            n_cases <- sum(num_vals == rv, na.rm = TRUE)
-            findings[[length(findings) + 1]] <- list(
-              var = vname, value = rv, count = n_cases,
-              source = "defined as missing in original SPSS file"
-            )
+      if (!is.null(spss_na_range)) {
+        range_lo <- spss_na_range[1]
+        range_hi <- spss_na_range[2]
+        range_match <- !is.na(num_vals) & num_vals >= range_lo & num_vals <= range_hi
+        if (any(range_match)) {
+          range_vals <- sort(unique(num_vals[range_match]))
+          for (rv in range_vals) {
+            # Skip if already found via na_values
+            already <- any(vapply(findings, function(f) {
+              f$var == vname && f$value == rv
+            }, logical(1)))
+            if (!already) {
+              n_cases <- sum(num_vals == rv, na.rm = TRUE)
+              findings[[length(findings) + 1]] <- list(
+                var = vname, value = rv, count = n_cases,
+                source = "user-defined missing value"
+              )
+            }
           }
         }
       }
@@ -9144,23 +9466,131 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 
   # --- Report findings -------------------------------------------------------
   if (length(findings) > 0) {
-    cat("\nPossible coded missing values detected:\n")
-    n_show <- min(length(findings), max_report)
+
+    # Determine which sources are present so we can pick the heading,
+    # render only the relevant legend lines, and fix the per-variable
+    # jrecode example.
+    sources_present <- unique(vapply(findings, function(f) f$source, character(1)))
+    has_udm  <- "user-defined missing value"          %in% sources_present
+    has_heur <- "suspected \u2014 not formally defined" %in% sources_present
+
+    # Heading: telegraph "suspected" only when ALL findings are heuristic
+    # (UDM-confirmed findings deserve the neutral wording even if some
+    # heuristic findings are mixed in).
+    heading <- if (has_heur && !has_udm) {
+      "Suspected missing-value codes detected:"
+    } else {
+      "Missing-value codes detected:"
+    }
+    cat("\n", heading, "\n", sep = "")
+
+    # Group findings by (variable, source). One row per group lists every
+    # value flagged for that combination. This collapses the typical UDM
+    # case (Cont_udm with codes -99 and -98) from two lines to one. Mixed
+    # sources on the same variable (rare — e.g. a UDM-bearing variable
+    # with an additional sentinel value caught only by the heuristic)
+    # produce two rows for that variable, one per source. Group order
+    # preserves the scan order of first appearance.
+    group_keys <- character(0)
+    groups     <- list()
+    for (f in findings) {
+      key <- paste0(f$var, "|", f$source)
+      if (is.null(groups[[key]])) {
+        group_keys <- c(group_keys, key)
+        groups[[key]] <- list(var = f$var, source = f$source,
+                              values = numeric(0), counts = integer(0))
+      }
+      groups[[key]]$values <- c(groups[[key]]$values, f$value)
+      groups[[key]]$counts <- c(groups[[key]]$counts, f$count)
+    }
+
+    n_groups <- length(group_keys)
+    n_show   <- min(n_groups, max_report)
+
+    # Dynamic width for the variable-name column so all rows align
+    # cleanly regardless of name length. +1 for the trailing colon.
+    visible_vars <- vapply(groups[group_keys[seq_len(n_show)]],
+                           function(g) g$var, character(1))
+    max_name_len <- max(nchar(visible_vars)) + 1L
+
+    # Two-pass print: first build all the value-count strings so we can
+    # compute the max width, then print with both name and vc columns
+    # padded so the [source] brackets align vertically across rows.
+    vc_parts <- character(n_show)
     for (i in seq_len(n_show)) {
-      f <- findings[[i]]
-      cat(sprintf("  %-15s %6g  (%d case%s)  [%s]\n",
-                  paste0(f$var, ":"), f$value, f$count,
-                  if (f$count == 1) "" else "s", f$source))
+      g <- groups[[group_keys[i]]]
+      vc_strs <- sprintf("%g (%d)", g$values, g$counts)
+      vc_parts[i] <- paste(vc_strs, collapse = ", ")
     }
-    if (length(findings) > max_report) {
-      cat(sprintf("  ... and %d more.\n", length(findings) - max_report))
+    max_vc_len <- max(nchar(vc_parts))
+
+    for (i in seq_len(n_show)) {
+      g <- groups[[group_keys[i]]]
+      cat(sprintf("  %-*s  %-*s  [%s]\n",
+                  max_name_len, paste0(g$var, ":"),
+                  max_vc_len, vc_parts[i],
+                  g$source))
     }
-    # Build example from first finding
-    ex <- findings[[1]]
-    cat("\nUse jrecode() to convert to NA if needed, e.g.:\n")
-    cat(sprintf("  %s$%s <- jrecode(%s, %s, map = \"%g=NA; else=copy\")\n",
-                obj_name, ex$var, obj_name, ex$var, ex$value))
-    cat("If these are real values, no action is needed.\n")
+    if (n_groups > max_report) {
+      # When the hidden rows span both source types, break down the counts
+      # so the reader can tell what kinds of findings are not visible.
+      # When all hidden rows share one source type, the legend already
+      # covers the interpretation and the simple count suffices.
+      hidden_sources <- vapply(groups[group_keys[(max_report + 1):n_groups]],
+                               function(g) g$source, character(1))
+      hidden_udm  <- sum(hidden_sources == "user-defined missing value")
+      hidden_heur <- sum(hidden_sources == "suspected \u2014 not formally defined")
+
+      if (hidden_udm > 0 && hidden_heur > 0) {
+        cat(sprintf("  ... and %d more:\n", n_groups - max_report))
+        cat(sprintf("    %d with [user-defined missing value]\n", hidden_udm))
+        cat(sprintf("    %d with [suspected \u2014 not formally defined]\n", hidden_heur))
+      } else {
+        cat(sprintf("  ... and %d more.\n", n_groups - max_report))
+      }
+    }
+
+    cat("\n")
+    if (has_udm) {
+      cat("[user-defined missing value]: already treated as NA by JeffsStatTools\n")
+      cat("  analysis functions. Conversion to plain NA is optional --- useful\n")
+      cat("  if you'll use this dataset with base R or non-package functions where\n")
+      cat("  the numeric values may be misinterpreted as real.\n")
+    }
+    if (has_heur) {
+      cat("[suspected \u2014 not formally defined]: not automatically treated as NA.\n")
+      cat("  Convert if these are missing-value codes; leave as-is if real.\n")
+    }
+
+    # Build a per-variable jrecode example. Prefer a UDM-bearing variable
+    # if present (more informative — UDMs typically have multiple codes).
+    # Collect all codes for the chosen variable so the map covers every
+    # finding for that variable in one call.
+    if (has_udm) {
+      ex_var <- findings[[which(vapply(findings,
+                                       function(f) f$source == "user-defined missing value",
+                                       logical(1)))[1]]]$var
+    } else {
+      ex_var <- findings[[1]]$var
+    }
+    ex_codes <- sort(unique(vapply(findings,
+                                   function(f) if (f$var == ex_var) f$value else NA_real_,
+                                   numeric(1))))
+    ex_codes <- ex_codes[!is.na(ex_codes)]
+    map_str  <- paste0(paste0(format(ex_codes), "=NA"), collapse = "; ")
+    map_str  <- paste0(map_str, "; else=copy")
+
+    cat("\nTo convert one variable:\n")
+    cat(sprintf("  %s$%s <- jrecode(%s, %s,\n    map = \"%s\")\n",
+                obj_name, ex_var, obj_name, ex_var, map_str))
+
+    # The bulk-strip option only applies to .sav loads, where preserve_udm
+    # at jload time can convert all UDMs in one step. Skipped for .rds and
+    # other formats where the data is already in R without that pathway.
+    if (has_udm && ext == "sav") {
+      cat("\nFor .sav files with many UDMs, jload(file, preserve_udm = FALSE)\n")
+      cat("strips them all at load time.\n")
+    }
   }
 }
 
@@ -9347,7 +9777,7 @@ jsave <- function(data, file, overwrite = FALSE) {
     # Ensure directory exists
     out_dir <- dirname(out_path)
     if (!dir.exists(out_dir)) {
-      stop("Directory does not exist: ", out_dir, call. = FALSE)
+      stop("Directory does not exist: ", .jst_norm_path(out_dir), call. = FALSE)
     }
   } else {
     # Bare filename — write to Data/ (create if needed)
@@ -9366,7 +9796,7 @@ jsave <- function(data, file, overwrite = FALSE) {
   if (file.exists(out_path) && !overwrite) {
     if (interactive()) {
       response <- readline(
-        paste0("File '", out_path, "' already exists. Overwrite? (y/n): ")
+        paste0("File '", .jst_norm_path(out_path), "' already exists. Overwrite? (y/n): ")
       )
       if (!tolower(trimws(response)) %in% c("y", "yes")) {
         message("Save cancelled.")
@@ -9374,32 +9804,102 @@ jsave <- function(data, file, overwrite = FALSE) {
       }
     } else {
       stop(
-        "File '", out_path, "' already exists. ",
+        "File '", .jst_norm_path(out_path), "' already exists. ",
         "Use overwrite = TRUE to replace it.",
         call. = FALSE
       )
     }
   }
 
-  # --- Write the file --------------------------------------------------------
-  switch(ext,
-         sav = haven::write_sav(data, out_path),
-         dta = haven::write_dta(data, out_path, version = 14),
-         xpt = haven::write_xpt(data, out_path),
-         xlsx = {
-           writexl::write_xlsx(data, out_path)
-           message("Note: Excel format does not preserve variable or value labels.")
-         },
-         csv = {
-           utils::write.csv(data, out_path, row.names = FALSE)
-           message("Note: CSV format does not preserve variable or value labels.")
-         },
-         rds = saveRDS(data, out_path)
+  # --- Issue 5: tagged-NA pre-flight check for .sav --------------------------
+  # SPSS .sav has no native representation for haven::tagged_na() values.
+  # Detecting and refusing here gives the user one clean package-level error
+  # naming the affected variables, instead of two stacked low-level haven
+  # errors plus a partial file on disk.
+  if (ext == "sav") {
+    tagged_vars <- .jst_has_tagged_na(data)
+    if (length(tagged_vars) > 0) {
+      show_n   <- min(length(tagged_vars), 10L)
+      var_list <- paste(tagged_vars[seq_len(show_n)], collapse = ", ")
+      if (length(tagged_vars) > show_n) {
+        var_list <- paste0(var_list, ", ... and ",
+                           length(tagged_vars) - show_n, " more")
+      }
+      stop(
+        "SPSS .sav format does not support tagged NAs. ",
+        length(tagged_vars), " variable",
+        if (length(tagged_vars) == 1) " contains" else "s contain",
+        " tagged NAs:\n  ", var_list, "\n",
+        "Convert tagged NAs to plain NA before saving (e.g. via ",
+        "haven::zap_missing()), or save as .dta which preserves tagged ",
+        "NAs natively.",
+        call. = FALSE
+      )
+    }
+  }
+
+  # --- Write the file (atomic: write to temp, then rename) -------------------
+  # Issue 6: writes go to a temporary path adjacent to the target. On
+  # success we rename the temp to the target; on any error we delete the
+  # temp and re-raise. This protects against partial-file scenarios where
+  # an underlying write_*() errors mid-write — without atomicity, jload()
+  # could later read a truncated file and report a misleading success.
+  #
+  # Naming notes: tempfile() produces a unique non-existing path. The
+  # target's extension is preserved (fileext = paste0(".", ext)) because
+  # haven::write_xpt() validates the file name and rejects paths whose
+  # name does not look like a SAS-acceptable filename — leading dots and
+  # foreign extensions both trigger "A provided name contains an illegal
+  # character." Adjacent placement (tmpdir = dirname(out_path)) keeps
+  # file.rename() within one filesystem so the rename is atomic.
+  basename_no_ext <- tools::file_path_sans_ext(basename(out_path))
+  temp_path <- tempfile(
+    pattern = paste0("jsave_", basename_no_ext, "_"),
+    tmpdir  = dirname(out_path),
+    fileext = paste0(".", ext)
   )
+
+  tryCatch({
+    switch(ext,
+           sav  = haven::write_sav(data, temp_path),
+           dta  = haven::write_dta(data, temp_path, version = 14),
+           xpt  = haven::write_xpt(data, temp_path),
+           xlsx = writexl::write_xlsx(data, temp_path),
+           csv  = utils::write.csv(data, temp_path, row.names = FALSE),
+           rds  = saveRDS(data, temp_path)
+    )
+  }, error = function(e) {
+    unlink(temp_path)
+    stop(conditionMessage(e), call. = FALSE)
+  })
+
+  # Move the completed temp into place. On Windows file.rename() fails if
+  # the destination exists, so explicitly remove first when overwriting.
+  if (file.exists(out_path)) {
+    if (!file.remove(out_path)) {
+      unlink(temp_path)
+      stop("Could not remove existing target file: ",
+           .jst_norm_path(out_path),
+           call. = FALSE)
+    }
+  }
+  if (!file.rename(temp_path, out_path)) {
+    unlink(temp_path)
+    stop("Could not finalize save: rename of temporary file to ",
+         .jst_norm_path(out_path), " failed.",
+         call. = FALSE)
+  }
+
+  # Format-specific notes (emitted after a confirmed successful write)
+  if (ext == "xlsx") {
+    message("Note: Excel format does not preserve variable or value labels.")
+  } else if (ext == "csv") {
+    message("Note: CSV format does not preserve variable or value labels.")
+  }
 
   # --- Confirmation message --------------------------------------------------
   message(
-    "Saved ", data_name, " to ", out_path,
+    "Saved ", data_name, " to ", .jst_norm_path(out_path),
     " (", format(nrow(data), big.mark = ","), " cases, ",
     ncol(data), " variables)"
   )

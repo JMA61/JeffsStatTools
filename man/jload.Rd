@@ -10,7 +10,9 @@ jload(
   use = FALSE,
   overwrite = FALSE,
   check.missing = TRUE,
-  sheet = NULL
+  sheet = NULL,
+  preserve_udm = TRUE,
+  udm.notice = NULL
 )
 }
 \arguments{
@@ -39,6 +41,22 @@ and reports them. Set to \code{FALSE} to skip this check.}
 name (character) or sheet number (integer). Defaults to the first sheet.
 If the file has multiple sheets and \code{sheet} is not specified,
 a message lists the available sheets.}
+
+\item{preserve_udm}{Logical. For SPSS \code{.sav} files only. If
+\code{TRUE} (default), user-defined missing-value (UDM) codes such as
+-99 are preserved as their original numeric values in the data frame,
+with metadata attached so the package's analysis functions still treat
+them as missing. If \code{FALSE}, UDM codes are converted to plain
+\code{NA} on import and the metadata is stripped (matching haven's
+default \code{user_na = FALSE} behaviour). Has no effect on non-SPSS
+formats. Corresponds to haven's \code{user_na} argument with the same
+semantics when set to \code{TRUE}.}
+
+\item{udm.notice}{Per-call override for the UDM notification frequency.
+\code{NULL} (default) defers to the global setting from \code{joutput()}.
+\code{TRUE} prints the notification on every load; \code{FALSE}
+suppresses it; \code{NULL} at the global level shows once per session.
+See \code{?joutput} for the full toggle behaviour.}
 }
 \value{
 Invisibly returns the loaded data frame. The primary effect is

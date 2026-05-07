@@ -4,7 +4,14 @@
 \alias{.jst_scan_coded_missing}
 \title{Internal: scan for coded missing values and report findings}
 \usage{
-.jst_scan_coded_missing(df, obj_name, ext)
+.jst_scan_coded_missing(df, obj_name, ext, scan_udm = TRUE)
+}
+\arguments{
+\item{scan_udm}{Logical. When \code{FALSE}, the haven \code{na_values}
+and \code{na_range} branches are skipped (only the suspicious-values
+heuristic runs). Set to \code{FALSE} when called after
+\code{.jst_handle_udms()} has already produced its narrative for
+\code{.sav} loads, to avoid duplicate output.}
 }
 \description{
 Internal: scan for coded missing values and report findings

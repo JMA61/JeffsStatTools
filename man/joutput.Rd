@@ -14,7 +14,8 @@ joutput(
   diagnostics = NULL,
   case.processing = NULL,
   var.labels = NULL,
-  ref.categories = NULL
+  ref.categories = NULL,
+  udm.notice = NULL
 )
 }
 \arguments{
@@ -68,6 +69,14 @@ the variable labels block.}
 
 \item{ref.categories}{Logical or NULL. Override the level's default
 for the reference categories block (registered dummies).}
+
+\item{udm.notice}{Three-state toggle controlling the user-defined
+missing-value (UDM) notification emitted by \code{jload()} for
+\code{.sav} files. \code{TRUE} prints the notification on every
+load that involves UDM-bearing variables; \code{FALSE} suppresses
+it entirely; \code{NULL} ("auto") prints it only the first time
+in a session, then suppresses it. Standard level uses \code{NULL}
+(auto), minimal uses \code{FALSE}, full uses \code{TRUE}.}
 }
 \value{
 Invisibly returns NULL. Called for its side effect of setting
