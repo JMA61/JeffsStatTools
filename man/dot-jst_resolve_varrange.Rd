@@ -25,6 +25,6 @@ variables.}
 \description{
 Handles both explicit variable names (var1, var2, var3) and colon notation
 (var1:var3) which expands to all columns between the two endpoints in
-column order. Named arguments (e.g. min.valid, var_label) are excluded.
+column order. Named arguments (e.g. min.valid, var.label) are excluded.
 }
 \keyword{internal}

@@ -11,7 +11,7 @@ jload(
   overwrite = FALSE,
   check.missing = TRUE,
   sheet = NULL,
-  preserve_udm = TRUE,
+  preserve.udm = TRUE,
   udm.notice = NULL
 )
 }
@@ -42,7 +42,7 @@ name (character) or sheet number (integer). Defaults to the first sheet.
 If the file has multiple sheets and \code{sheet} is not specified,
 a message lists the available sheets.}
 
-\item{preserve_udm}{Logical. For SPSS \code{.sav} files only. If
+\item{preserve.udm}{Logical. For SPSS \code{.sav} files only. If
 \code{TRUE} (default), user-defined missing-value (UDM) codes such as
 -99 are preserved as their original numeric values in the data frame,
 with metadata attached so the package's analysis functions still treat

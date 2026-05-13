@@ -4,13 +4,13 @@
 \alias{.jst_format_udm_narrative}
 \title{Internal: format the UDM narrative notification text}
 \usage{
-.jst_format_udm_narrative(udm_info, preserve_udm, max_show = 10L)
+.jst_format_udm_narrative(udm_info, preserve.udm, max_show = 10L)
 }
 \description{
 Builds the message string emitted when UDM-bearing variables are
 detected during a load. Wording differs depending on whether the
-UDMs were preserved (\code{preserve_udm = TRUE}) or converted
-(\code{preserve_udm = FALSE}). Variable list is truncated at
+UDMs were preserved (\code{preserve.udm = TRUE}) or converted
+(\code{preserve.udm = FALSE}). Variable list is truncated at
 \code{max_show} entries with an "...and N more" tail.
 }
 \details{

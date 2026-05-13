@@ -4,7 +4,7 @@
 \alias{jrelabel}
 \title{Apply variable and value labels to a variable}
 \usage{
-jrelabel(data, var, labels = NULL, var_label = NULL)
+jrelabel(data, var, labels = NULL, var.label = NULL)
 }
 \arguments{
 \item{data}{A data frame containing the variable.}
@@ -20,7 +20,7 @@ Examples:
 \item \code{"1=Employed; 2=Unemployed; 3=Student; 4=Retired"}
 }}
 
-\item{var_label}{Optional. A quoted string to use as the variable label
+\item{var.label}{Optional. A quoted string to use as the variable label
 (the description shown by \code{jdesc()}, \code{jfreq()}, etc.).
 If omitted, any existing variable label is preserved. If the variable
 has no existing label, no variable label is set.}
@@ -40,7 +40,7 @@ The function accepts haven-labelled, plain numeric, factor, and character
 variables. The output is always a \code{haven_labelled} vector, which is
 compatible with all JeffsStatTools functions.
 
-Both the \code{labels} and \code{var_label} arguments are optional. If
+Both the \code{labels} and \code{var.label} arguments are optional. If
 neither is supplied, the function returns the variable unchanged as a
 \code{haven_labelled} vector.
 
@@ -52,10 +52,10 @@ new labels are provided.
 df <- data.frame(Status = c(1, 2, 1, 2, 1, 2))
 df$StatusR <- ifelse(df$Status == 1, 1, 0)
 df$StatusR <- jrelabel(df, StatusR, labels = "1=Yes; 0=No",
-                       var_label = "Status (recoded)")
+                       var.label = "Status (recoded)")
 
 # Add just a variable label
-df$StatusR <- jrelabel(df, StatusR, var_label = "Employment Status")
+df$StatusR <- jrelabel(df, StatusR, var.label = "Employment Status")
 
 # Add just value labels
 df$StatusR <- jrelabel(df, StatusR, labels = "1=Yes; 0=No")

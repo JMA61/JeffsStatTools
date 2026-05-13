@@ -4,7 +4,7 @@
 \alias{javg}
 \title{Compute a row-wise mean across multiple variables}
 \usage{
-javg(data, ..., min.valid = NULL, fixed = FALSE, var_label = NULL)
+javg(data, ..., min.valid = NULL, fixed = FALSE, var.label = NULL)
 }
 \arguments{
 \item{data}{A data frame, or omit to use the \code{juse()} default.}
@@ -22,7 +22,7 @@ case is the number of non-missing values (i.e. the mean adjusts for
 missing data). If \code{TRUE}, the denominator is always the total
 number of variables (i.e. missing values effectively count as zero).}
 
-\item{var_label}{Character string (optional). A variable label to attach
+\item{var.label}{Character string (optional). A variable label to attach
 to the result. If omitted, an auto-generated label is used.}
 }
 \value{
@@ -69,7 +69,7 @@ MyData$Avg <- javg(Score1, Score2, Score3, min.valid = 1, fixed = TRUE)
 
 # With a custom variable label
 MyData$ScaleMean <- javg(Attitude1:Attitude6,
-                         var_label = "Scale Mean Score")
+                         var.label = "Scale Mean Score")
 
 # With an explicit data frame (instead of using juse default)
 MyData$Avg <- javg(MyData, Score1, Score2, Score3)

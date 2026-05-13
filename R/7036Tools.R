@@ -1099,6 +1099,29 @@
                   udm.notice = TRUE)
 )
 
+# -- joptions defaults --------------------------------------------------------
+#
+# Single source of truth for joptions slot defaults. Consulted both by
+# joptions itself for reset semantics and by downstream readers (jload,
+# jconvert, jdeclare_udm, jrecode, .jst_scan_coded_missing) via
+# getOption() fallback when no explicit setting is present.
+#
+# Slots:
+#   missing.convention   - one of "none", "spss", "stata". "none" =
+#                          preserve-as-loaded (no auto-conversion at
+#                          load time). "spss" / "stata" opts into
+#                          load-time auto-conversion and supplies the
+#                          target convention for fresh UDM declarations.
+#   udm.convention.codes - numeric vector, length 1-4, whole numbers,
+#                          no duplicates. Recommended UDM code set used
+#                          by jconvert for Stata-tag -> SPSS-code mapping
+#                          and by .jst_scan_coded_missing for
+#                          convention-matched detection.
+.jst_options_defaults <- list(
+  missing.convention   = "none",
+  udm.convention.codes = c(-99, -98, -97, -96)
+)
+
 #' Internal helper: resolve a display toggle value
 #'
 #' Implements three-tier precedence: (1) explicit per-call argument wins,
@@ -3559,6 +3582,232 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
     cat("  ", nm, ": ", label, override_str, "\n", sep = "")
   }
   cat("\n")
+}
+
+
+# =============================================================================
+#  joptions -- non-display session options
+# =============================================================================
+
+# -- Internal: print current joptions() status --------------------------------
+#
+# Reads slot values from options() with fallback to .jst_options_defaults
+# and prints the Options Settings panel. Called at the end of every
+# joptions() call (including reset).
+
+#' @keywords internal
+.jst_options_status <- function() {
+  mc <- getOption(".jst_options_missing_convention",
+                  .jst_options_defaults$missing.convention)
+  cc <- getOption(".jst_options_udm_convention_codes",
+                  .jst_options_defaults$udm.convention.codes)
+
+  .cat_red("Options Settings\n")
+  cat("missing.convention: ",   mc, "\n", sep = "")
+  cat("udm.convention.codes: ", paste(cc, collapse = ", "), "\n", sep = "")
+  cat("\n")
+}
+
+
+# -- Internal: globalenv() scan and one-line mismatch nudge -------------------
+#
+# Called by joptions() when missing.convention is set to "spss" or
+# "stata". Scans globalenv() for data frames; for each, classifies each
+# column's UDM convention via .jst_missing_info(); computes the DF's
+# predominant convention; emits a one-line notice listing DFs whose
+# predominant convention differs from target_convention. Silent when
+# no mismatches.
+#
+# Classification rules (per locked design, Cross-cutting 3 Notes):
+#   - Only columns with declared UDMs (SPSS-form na_values or Stata-form
+#     tagged_na) count toward the predominant convention. Plain numeric
+#     columns are ignored.
+#   - Ties (equal SPSS- and Stata-form counts) cause the DF to be skipped.
+#   - DFs with zero UDM-bearing columns are skipped (no predominant
+#     convention to mismatch against).
+#
+# All mismatched DFs share the same predominant convention (the one
+# opposite the newly-set target), so the message can group them.
+
+#' @keywords internal
+.jst_options_nudge <- function(target_convention) {
+  env       <- globalenv()
+  obj_names <- ls(envir = env)
+  mismatched <- character(0)
+
+  for (nm in obj_names) {
+    obj <- tryCatch(get(nm, envir = env, inherits = FALSE),
+                    error = function(e) NULL)
+    if (!is.data.frame(obj)) next
+
+    spss_count  <- 0L
+    stata_count <- 0L
+    for (col in obj) {
+      info <- .jst_missing_info(col)
+      if (is.null(info)) next
+      if (identical(info$representation, "spss"))  spss_count  <- spss_count  + 1L
+      if (identical(info$representation, "stata")) stata_count <- stata_count + 1L
+    }
+
+    if (spss_count == 0L && stata_count == 0L) next   # no UDM-bearing cols
+    if (spss_count == stata_count)              next   # tie
+
+    predominant <- if (spss_count > stata_count) "spss" else "stata"
+    if (predominant != target_convention) {
+      mismatched <- c(mismatched, nm)
+    }
+  }
+
+  if (length(mismatched) > 0L) {
+    other_conv <- if (target_convention == "spss") "Stata" else "SPSS"
+    verb       <- if (length(mismatched) == 1L) "uses" else "use"
+    cat(sprintf("Note: %s predominantly %s %s-form UDMs. Use jconvert() to align.\n",
+                paste(mismatched, collapse = ", "),
+                verb,
+                other_conv))
+  }
+
+  invisible(NULL)
+}
+
+
+#' Set or display session-level package options
+#'
+#' Controls session-wide settings that affect how the package handles
+#' missing-value information and related conventions. \code{joptions} is
+#' the non-display counterpart to \code{\link{joutput}}, which handles
+#' output verbosity. Settings are read fresh on each function call:
+#' changing a setting after data has been loaded does not retroactively
+#' transform data already in memory. \code{jconvert()} is the
+#' explicit transform path for data already in the workspace.
+#'
+#' @section Slots:
+#' \describe{
+#'   \item{missing.convention}{Character, length 1. One of \code{"none"},
+#'     \code{"spss"}, or \code{"stata"}. Default: \code{"none"}.
+#'     \code{"none"} preserves loaded data as-is (no automatic conversion
+#'     between UDM representations at load time). \code{"spss"} or
+#'     \code{"stata"} opts into load-time auto-conversion via
+#'     \code{\link{jload}}, and also supplies the target convention for
+#'     fresh UDM declarations on columns with no existing convention.}
+#'   \item{udm.convention.codes}{Numeric vector, length 1 to 4, whole
+#'     numbers, no duplicates. Sign unconstrained. Default:
+#'     \code{c(-99, -98, -97, -96)}. The recommended UDM code set used
+#'     by \code{jconvert()} when translating Stata tagged-NA values
+#'     (\code{.a}, \code{.b}, \code{.c}, \code{.d}) into SPSS-form
+#'     numeric codes, and by the load-time diagnostic for
+#'     convention-matched detection.}
+#' }
+#'
+#' @section Call patterns:
+#' \describe{
+#'   \item{\code{joptions()}}{Print the current settings panel.}
+#'   \item{\code{joptions(NULL)}}{Reset all slots to defaults, then print
+#'     the panel.}
+#'   \item{\code{joptions(slot = value, ...)}}{Set one or more slots,
+#'     then print the panel. Passing \code{slot = NULL} as a named
+#'     argument leaves that slot at its current value -- useful for
+#'     setting one slot without touching another. To reset a single
+#'     slot to its default, pass the default value explicitly (e.g.
+#'     \code{joptions(missing.convention = "none")}).}
+#' }
+#'
+#' @section Environment-scan notice:
+#' Setting \code{missing.convention} to \code{"spss"} or \code{"stata"}
+#' triggers a one-time scan of \code{globalenv()} for data frames whose
+#' predominant UDM convention differs from the newly-set value. When
+#' mismatches exist, a one-line notice lists the affected data frames
+#' and suggests \code{jconvert()} for alignment. The notice is
+#' informational; nothing is changed. Plain data frames with no
+#' UDM-bearing columns -- including the course datasets in their
+#' standard form -- do not trigger the notice.
+#'
+#' @param missing.convention One of \code{"none"}, \code{"spss"}, or
+#'   \code{"stata"}. See Slots.
+#' @param udm.convention.codes Numeric vector, length 1 to 4. See Slots.
+#'
+#' @return Invisibly returns \code{NULL}. Called for the side effect of
+#'   updating session options and printing the status panel.
+#'
+#' @examples
+#' joptions()                                        # show current settings
+#' joptions(missing.convention = "spss")             # set, panel, nudge
+#' joptions(udm.convention.codes = c(-99, -98))      # set, panel, no nudge
+#' joptions(missing.convention = "stata",
+#'          udm.convention.codes = c(-99, -98, -97)) # set both
+#' joptions(missing.convention = "spss",
+#'          udm.convention.codes = NULL)             # set mc, leave codes
+#' joptions(NULL)                                    # reset all to defaults
+#'
+#' @seealso \code{\link{joutput}} for output-verbosity settings;
+#'   \code{\link{JeffsStatTools}} for the package overview.
+#'
+#' @export
+joptions <- function(missing.convention = NULL, udm.convention.codes = NULL) {
+
+  mc_supplied <- !missing(missing.convention)
+  cc_supplied <- !missing(udm.convention.codes)
+
+  # joptions() -- no args, status only
+  if (!mc_supplied && !cc_supplied) {
+    .jst_options_status()
+    return(invisible(NULL))
+  }
+
+  # Distinguish positional NULL (reset) from named NULL (leave alone) by
+  # inspecting the raw call. match.call() would have rewritten
+  # joptions(NULL) to joptions(missing.convention = NULL), erasing the
+  # distinction; sys.call() preserves it.
+  raw_names <- names(sys.call())
+  if (!is.null(raw_names)) raw_names <- raw_names[-1L]   # drop function-name slot
+  positional_first <- length(raw_names) >= 1L &&
+                      (is.null(raw_names) || raw_names[1L] == "")
+
+  # joptions(NULL) -- single positional NULL, reset all
+  if (mc_supplied && !cc_supplied &&
+      is.null(missing.convention) && positional_first) {
+    options(.jst_options_missing_convention   = NULL)
+    options(.jst_options_udm_convention_codes = NULL)
+    .jst_options_status()
+    return(invisible(NULL))
+  }
+
+  # Validate (atomic) -- both checks pass before any options() write
+  if (mc_supplied && !is.null(missing.convention)) {
+    if (!is.character(missing.convention) ||
+        length(missing.convention) != 1L ||
+        !(missing.convention %in% c("none", "spss", "stata"))) {
+      stop("missing.convention must be one of: \"none\", \"spss\", \"stata\".",
+           call. = FALSE)
+    }
+  }
+  if (cc_supplied && !is.null(udm.convention.codes)) {
+    x <- udm.convention.codes
+    if (!is.numeric(x))
+      stop("udm.convention.codes must be numeric.", call. = FALSE)
+    if (length(x) < 1L || length(x) > 4L)
+      stop("udm.convention.codes must have length 1 to 4.", call. = FALSE)
+    if (anyNA(x) || !all(x == round(x)))
+      stop("udm.convention.codes must contain only whole numbers.", call. = FALSE)
+    if (anyDuplicated(x) > 0L)
+      stop("udm.convention.codes must contain no duplicates.", call. = FALSE)
+  }
+
+  # Write -- only supplied non-NULL args; NULL means "leave alone"
+  trigger_nudge <- FALSE
+  if (mc_supplied && !is.null(missing.convention)) {
+    options(.jst_options_missing_convention = missing.convention)
+    if (missing.convention %in% c("spss", "stata")) trigger_nudge <- TRUE
+  }
+  if (cc_supplied && !is.null(udm.convention.codes)) {
+    options(.jst_options_udm_convention_codes = udm.convention.codes)
+  }
+
+  # Status panel, then nudge (per Session 28 Item 1 decision)
+  .jst_options_status()
+  if (trigger_nudge) .jst_options_nudge(missing.convention)
+
+  invisible(NULL)
 }
 
 
@@ -7753,7 +8002,7 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL) {
 #'
 #' Handles both explicit variable names (var1, var2, var3) and colon notation
 #' (var1:var3) which expands to all columns between the two endpoints in
-#' column order. Named arguments (e.g. min.valid, var_label) are excluded.
+#' column order. Named arguments (e.g. min.valid, var.label) are excluded.
 #'
 #' @param quos_list A list of quosures from rlang::enquos(...).
 #' @param data The data frame to resolve column names against.
@@ -7850,7 +8099,7 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL) {
 #'   values required to compute a sum. If a case has fewer non-missing
 #'   values, the result is \code{NA}. If omitted, all values must be
 #'   non-missing (equivalent to setting min.valid to the number of variables).
-#' @param var_label Character string (optional). A variable label to attach
+#' @param var.label Character string (optional). A variable label to attach
 #'   to the result. If omitted, an auto-generated label is used.
 #'
 #' @return A numeric vector the same length as \code{nrow(data)}, suitable for
@@ -7876,7 +8125,7 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL) {
 #'
 #' # With a custom variable label
 #' MyData$Total <- jsum(Score1, Score2, Score3,
-#'                      var_label = "Total Score")
+#'                      var.label = "Total Score")
 #'
 #' # With an explicit data frame (instead of using juse default)
 #' MyData$Total <- jsum(MyData, Score1, Score2, Score3)
@@ -7887,7 +8136,7 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL) {
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
-jsum <- function(data, ..., min.valid = NULL, var_label = NULL) {
+jsum <- function(data, ..., min.valid = NULL, var.label = NULL) {
 
   # Resolve the first argument: explicit data frame, juse default,
   # or bare-symbol-as-variable-name (leading comma omitted).
@@ -7996,8 +8245,8 @@ jsum <- function(data, ..., min.valid = NULL, var_label = NULL) {
   message(msg_parts)
 
   # Attach variable label
-  if (!is.null(var_label)) {
-    labelled::var_label(result) <- var_label
+  if (!is.null(var.label)) {
+    labelled::var_label(result) <- var.label
   } else {
     auto_label <- paste0("Sum of ", paste(label_parts, collapse = ", "))
     labelled::var_label(result) <- auto_label
@@ -8039,7 +8288,7 @@ jsum <- function(data, ..., min.valid = NULL, var_label = NULL) {
 #'   case is the number of non-missing values (i.e. the mean adjusts for
 #'   missing data). If \code{TRUE}, the denominator is always the total
 #'   number of variables (i.e. missing values effectively count as zero).
-#' @param var_label Character string (optional). A variable label to attach
+#' @param var.label Character string (optional). A variable label to attach
 #'   to the result. If omitted, an auto-generated label is used.
 #'
 #' @return A numeric vector the same length as \code{nrow(data)}, suitable for
@@ -8068,7 +8317,7 @@ jsum <- function(data, ..., min.valid = NULL, var_label = NULL) {
 #'
 #' # With a custom variable label
 #' MyData$ScaleMean <- javg(Attitude1:Attitude6,
-#'                          var_label = "Scale Mean Score")
+#'                          var.label = "Scale Mean Score")
 #'
 #' # With an explicit data frame (instead of using juse default)
 #' MyData$Avg <- javg(MyData, Score1, Score2, Score3)
@@ -8079,7 +8328,7 @@ jsum <- function(data, ..., min.valid = NULL, var_label = NULL) {
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
-javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var_label = NULL) {
+javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var.label = NULL) {
 
   # Resolve the first argument: explicit data frame, juse default,
   # or bare-symbol-as-variable-name (leading comma omitted).
@@ -8196,8 +8445,8 @@ javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var_label = NULL) {
   message(msg_parts)
 
   # Attach variable label
-  if (!is.null(var_label)) {
-    labelled::var_label(result) <- var_label
+  if (!is.null(var.label)) {
+    labelled::var_label(result) <- var.label
   } else {
     auto_label <- paste0("Mean of ", paste(label_parts, collapse = ", "))
     labelled::var_label(result) <- auto_label
@@ -8225,7 +8474,7 @@ javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var_label = NULL) {
 #' variables. The output is always a \code{haven_labelled} vector, which is
 #' compatible with all JeffsStatTools functions.
 #'
-#' Both the \code{labels} and \code{var_label} arguments are optional. If
+#' Both the \code{labels} and \code{var.label} arguments are optional. If
 #' neither is supplied, the function returns the variable unchanged as a
 #' \code{haven_labelled} vector.
 #'
@@ -8243,7 +8492,7 @@ javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var_label = NULL) {
 #'     \item \code{"1=Employed; 2=Unemployed; 3=Student; 4=Retired"}
 #'   }
 #'
-#' @param var_label Optional. A quoted string to use as the variable label
+#' @param var.label Optional. A quoted string to use as the variable label
 #'   (the description shown by \code{jdesc()}, \code{jfreq()}, etc.).
 #'   If omitted, any existing variable label is preserved. If the variable
 #'   has no existing label, no variable label is set.
@@ -8257,10 +8506,10 @@ javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var_label = NULL) {
 #' df <- data.frame(Status = c(1, 2, 1, 2, 1, 2))
 #' df$StatusR <- ifelse(df$Status == 1, 1, 0)
 #' df$StatusR <- jrelabel(df, StatusR, labels = "1=Yes; 0=No",
-#'                        var_label = "Status (recoded)")
+#'                        var.label = "Status (recoded)")
 #'
 #' # Add just a variable label
-#' df$StatusR <- jrelabel(df, StatusR, var_label = "Employment Status")
+#' df$StatusR <- jrelabel(df, StatusR, var.label = "Employment Status")
 #'
 #' # Add just value labels
 #' df$StatusR <- jrelabel(df, StatusR, labels = "1=Yes; 0=No")
@@ -8275,7 +8524,7 @@ javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var_label = NULL) {
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
-jrelabel <- function(data, var, labels = NULL, var_label = NULL) {
+jrelabel <- function(data, var, labels = NULL, var.label = NULL) {
 
   # --- Resolve first argument -----------------------------------------------
   arg1 <- .jst_resolve_first_arg(
@@ -8346,11 +8595,11 @@ jrelabel <- function(data, var, labels = NULL, var_label = NULL) {
   result <- labelled::labelled(num_vals)
 
   # --- Apply variable label ---
-  if (!is.null(var_label)) {
-    if (!is.character(var_label) || length(var_label) != 1) {
-      stop("The var_label argument must be a single quoted string.", call. = FALSE)
+  if (!is.null(var.label)) {
+    if (!is.character(var.label) || length(var.label) != 1) {
+      stop("The var.label argument must be a single quoted string.", call. = FALSE)
     }
-    labelled::var_label(result) <- var_label
+    labelled::var_label(result) <- var.label
   } else if (!is.null(existing_var_label) &&
              nchar(trimws(existing_var_label)) > 0) {
     labelled::var_label(result) <- existing_var_label
@@ -8384,7 +8633,7 @@ jrelabel <- function(data, var, labels = NULL, var_label = NULL) {
 #' or recode dichotomies. Variable and value labels are handled automatically.
 #'
 #' @param data     A data frame containing the original variable.
-#' @param orig_var The variable to recode (unquoted, e.g. \code{AgeGroup}).
+#' @param orig.var The variable to recode (unquoted, e.g. \code{AgeGroup}).
 #' @param map      A quoted string specifying the recode rules, using the
 #'   format \code{"old=new"} with rules separated by semicolons. Multiple old
 #'   values mapping to the same new value are separated by commas on the left
@@ -8497,7 +8746,7 @@ jrelabel <- function(data, var, labels = NULL, var_label = NULL) {
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
-jrecode <- function(data, orig_var, map, labels = NULL) {
+jrecode <- function(data, orig.var, map, labels = NULL) {
 
   # --- Resolve first argument -----------------------------------------------
   arg1 <- .jst_resolve_first_arg(
@@ -8513,17 +8762,17 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
 
   # Determine variable name. If the user typed jrecode(VarName, map = "...")
   # — data omitted, named map — the helper captured VarName as first_arg_sub.
-  # Otherwise orig_var is supplied positionally.
+  # Otherwise orig.var is supplied positionally.
   if (arg1$mode == "symbol_with_default") {
-    if (!missing(orig_var)) {
-      displaced <- deparse(substitute(orig_var))
+    if (!missing(orig.var)) {
+      displaced <- deparse(substitute(orig.var))
       stop("jrecode(): when the data argument is omitted, all subsequent arguments must be named. ",
            "Use jrecode(", deparse(arg1$first_arg_sub), ", map = ", displaced, ")",
            call. = FALSE)
     }
     orig_name <- deparse(arg1$first_arg_sub)
   } else {
-    orig_name <- deparse(substitute(orig_var))
+    orig_name <- deparse(substitute(orig.var))
   }
 
   # --- Input checks ---
@@ -8759,7 +9008,7 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
 #'
 #' Converts user-defined missing-value (UDM) codes to plain \code{NA} on
 #' \code{haven_labelled_spss} variables already in memory. Useful when a
-#' dataset has been loaded with \code{jload(..., preserve_udm = TRUE)} (the
+#' dataset has been loaded with \code{jload(..., preserve.udm = TRUE)} (the
 #' default) for round-trip fidelity but a downstream operation — typically
 #' a base R or non-package function — would treat the UDM codes as real
 #' numeric values.
@@ -8796,7 +9045,7 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
 #'     labelling preserved.
 #' }
 #'
-#' This matches the behaviour of \code{jload(file, preserve_udm = FALSE)},
+#' This matches the behaviour of \code{jload(file, preserve.udm = FALSE)},
 #' the "convert at load time" alternative. \code{jstrip_udm()} provides
 #' the same conversion for data already in memory.
 #'
@@ -8822,7 +9071,7 @@ jrecode <- function(data, orig_var, map, labels = NULL) {
 #' }
 #'
 #' @seealso \code{\link{jload}} for the load-time alternative
-#'   (\code{preserve_udm = FALSE}).
+#'   (\code{preserve.udm = FALSE}).
 #'
 #' @export
 jstrip_udm <- function(data, ..., udm.notice = TRUE) {
@@ -8908,7 +9157,7 @@ jstrip_udm <- function(data, ..., udm.notice = TRUE) {
     return(invisible(data))
   }
 
-  # --- Strip UDMs (mirrors .jst_handle_udms preserve_udm = FALSE branch) -----
+  # --- Strip UDMs (mirrors .jst_handle_udms preserve.udm = FALSE branch) -----
   for (vname in vars_with_udms) {
     col      <- data[[vname]]
     na_vals  <- attr(col, "na_values")
@@ -9051,7 +9300,7 @@ jstrip_udm <- function(data, ..., udm.notice = TRUE) {
 #'   name (character) or sheet number (integer). Defaults to the first sheet.
 #'   If the file has multiple sheets and \code{sheet} is not specified,
 #'   a message lists the available sheets.
-#' @param preserve_udm Logical. For SPSS \code{.sav} files only. If
+#' @param preserve.udm Logical. For SPSS \code{.sav} files only. If
 #'   \code{TRUE} (default), user-defined missing-value (UDM) codes such as
 #'   -99 are preserved as their original numeric values in the data frame,
 #'   with metadata attached so the package's analysis functions still treat
@@ -9145,7 +9394,7 @@ jstrip_udm <- function(data, ..., udm.notice = TRUE) {
 #' @export
 jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
                   check.missing = TRUE, sheet = NULL,
-                  preserve_udm = TRUE, udm.notice = NULL) {
+                  preserve.udm = TRUE, udm.notice = NULL) {
 
   # --- Validate file argument ------------------------------------------------
   if (missing(file) || !is.character(file) || length(file) != 1 ||
@@ -9286,8 +9535,8 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 
   # --- Read the file ---------------------------------------------------------
   # For .sav: always pass user_na = TRUE so UDM metadata is available for
-  # the .jst_handle_udms step below, regardless of preserve_udm. The package
-  # then decides whether to preserve or convert based on preserve_udm.
+  # the .jst_handle_udms step below, regardless of preserve.udm. The package
+  # then decides whether to preserve or convert based on preserve.udm.
   df <- switch(ext,
                sav      = haven::read_sav(resolved_path, user_na = TRUE),
                dta      = haven::read_dta(resolved_path),
@@ -9336,10 +9585,10 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   # .jst_handle_udms iterates columns and uses .jst_missing_info() to detect
   # formal declarations in either representation. For UDM-free data the
   # call is cheap and returns an empty udm_info; no narrative is emitted.
-  # Either preserve the metadata (preserve_udm = TRUE, the default) or
-  # convert UDM cells to plain NA and strip the metadata (preserve_udm
+  # Either preserve the metadata (preserve.udm = TRUE, the default) or
+  # convert UDM cells to plain NA and strip the metadata (preserve.udm
   # = FALSE). Either way we capture per-variable info for the narrative.
-  udm_result <- .jst_handle_udms(df, preserve_udm)
+  udm_result <- .jst_handle_udms(df, preserve.udm)
   df         <- udm_result$df
   udm_info   <- udm_result$udm_info
 
@@ -9374,7 +9623,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
       !isTRUE(getOption(".jst_udm_notice_shown", FALSE))
     }
     if (show_notice) {
-      message(.jst_format_udm_narrative(udm_info, preserve_udm))
+      message(.jst_format_udm_narrative(udm_info, preserve.udm))
       options(.jst_udm_notice_shown = TRUE)
     }
   }
@@ -9553,7 +9802,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' \code{haven_labelled_spss}) and Stata UDM representation
 #' (\code{tagged_na} markers on \code{haven_labelled}).
 #'
-#' When \code{preserve_udm = FALSE}, additionally converts UDM cells to
+#' When \code{preserve.udm = FALSE}, additionally converts UDM cells to
 #' \code{NA} and strips the corresponding metadata. For SPSS columns
 #' this strips \code{na_values} and \code{na_range}; for Stata columns
 #' \code{haven::zap_missing()} converts tagged-NA cells to plain NA.
@@ -9567,7 +9816,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #'   (the \code{.jst_missing_info()} return value for that column).
 #'
 #' @keywords internal
-.jst_handle_udms <- function(df, preserve_udm) {
+.jst_handle_udms <- function(df, preserve.udm) {
   udm_info <- list()
 
   for (vname in names(df)) {
@@ -9581,7 +9830,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
       info = info
     )
 
-    if (!preserve_udm) {
+    if (!preserve.udm) {
       if (info$representation == "spss") {
         # unclass() bypasses vctrs's "Can't convert <haven_labelled> to <double>"
         # cast refusal in cold-session vec_cast dispatch ordering. See the matching
@@ -9617,8 +9866,8 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #'
 #' Builds the message string emitted when UDM-bearing variables are
 #' detected during a load. Wording differs depending on whether the
-#' UDMs were preserved (\code{preserve_udm = TRUE}) or converted
-#' (\code{preserve_udm = FALSE}). Variable list is truncated at
+#' UDMs were preserved (\code{preserve.udm = TRUE}) or converted
+#' (\code{preserve.udm = FALSE}). Variable list is truncated at
 #' \code{max_show} entries with an "...and N more" tail.
 #'
 #' Renders SPSS UDM codes (e.g. \code{-99}) and Stata tagged NAs
@@ -9627,7 +9876,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' \code{code} column of \code{.jst_missing_info()}'s return.
 #'
 #' @keywords internal
-.jst_format_udm_narrative <- function(udm_info, preserve_udm, max_show = 10L) {
+.jst_format_udm_narrative <- function(udm_info, preserve.udm, max_show = 10L) {
   n_vars <- length(udm_info)
   if (n_vars == 0) return(NULL)
 
@@ -9664,7 +9913,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     }
 
     body <- paste(parts, collapse = "; ")
-    if (!preserve_udm) body <- paste0("was ", body)
+    if (!preserve.udm) body <- paste0("was ", body)
 
     var_strings[i] <- sprintf("%s: %s", entry$var, body)
   }
@@ -9674,14 +9923,14 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     list_str <- paste0(list_str, "; ...and ", n_vars - max_show, " more")
   }
 
-  if (preserve_udm) {
+  if (preserve.udm) {
     sprintf(
       paste0(
         "%d variables have user-defined missing-value declarations preserved ",
         "from the loaded data (%s). Declarations are retained for round-trip ",
         "fidelity and these codes are treated as NA in analysis functions. ",
         "To convert them to plain NA on import instead, use jload(file, ",
-        "preserve_udm = FALSE)."
+        "preserve.udm = FALSE)."
       ),
       n_vars, list_str
     )
@@ -9689,9 +9938,9 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     sprintf(
       paste0(
         "%d variables had user-defined missing-value declarations; these have ",
-        "been converted to plain NA per preserve_udm = FALSE (%s). To preserve ",
+        "been converted to plain NA per preserve.udm = FALSE (%s). To preserve ",
         "them as their original declarations instead, use jload(file, ",
-        "preserve_udm = TRUE)."
+        "preserve.udm = TRUE)."
       ),
       n_vars, list_str
     )
@@ -10076,11 +10325,11 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     cat(sprintf("  %s$%s <- jrecode(%s, %s,\n    map = \"%s\")\n",
                 obj_name, ex_var, obj_name, ex_var, map_str))
 
-    # The bulk-strip option only applies to .sav loads, where preserve_udm
+    # The bulk-strip option only applies to .sav loads, where preserve.udm
     # at jload time can convert all UDMs in one step. Skipped for .rds and
     # other formats where the data is already in R without that pathway.
     if (has_udm && ext == "sav") {
-      cat("\nFor .sav files with many UDMs, jload(file, preserve_udm = FALSE)\n")
+      cat("\nFor .sav files with many UDMs, jload(file, preserve.udm = FALSE)\n")
       cat("strips them all at load time.\n")
     }
   }

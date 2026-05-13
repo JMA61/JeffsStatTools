@@ -4,7 +4,7 @@
 \alias{jsum}
 \title{Compute a row-wise sum across multiple variables}
 \usage{
-jsum(data, ..., min.valid = NULL, var_label = NULL)
+jsum(data, ..., min.valid = NULL, var.label = NULL)
 }
 \arguments{
 \item{data}{A data frame, or omit to use the \code{juse()} default.}
@@ -17,7 +17,7 @@ values required to compute a sum. If a case has fewer non-missing
 values, the result is \code{NA}. If omitted, all values must be
 non-missing (equivalent to setting min.valid to the number of variables).}
 
-\item{var_label}{Character string (optional). A variable label to attach
+\item{var.label}{Character string (optional). A variable label to attach
 to the result. If omitted, an auto-generated label is used.}
 }
 \value{
@@ -58,7 +58,7 @@ MyData$ScaleTotal <- jsum(Attitude1:Attitude3, Attitude4R, Attitude5:Attitude6)
 
 # With a custom variable label
 MyData$Total <- jsum(Score1, Score2, Score3,
-                     var_label = "Total Score")
+                     var.label = "Total Score")
 
 # With an explicit data frame (instead of using juse default)
 MyData$Total <- jsum(MyData, Score1, Score2, Score3)

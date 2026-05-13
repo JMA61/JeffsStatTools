@@ -4,12 +4,12 @@
 \alias{jrecode}
 \title{Recode a variable with explicit value mapping and optional labels}
 \usage{
-jrecode(data, orig_var, map, labels = NULL)
+jrecode(data, orig.var, map, labels = NULL)
 }
 \arguments{
 \item{data}{A data frame containing the original variable.}
 
-\item{orig_var}{The variable to recode (unquoted, e.g. \code{AgeGroup}).}
+\item{orig.var}{The variable to recode (unquoted, e.g. \code{AgeGroup}).}
 
 \item{map}{A quoted string specifying the recode rules, using the
 format \code{"old=new"} with rules separated by semicolons. Multiple old

@@ -31,7 +31,7 @@ must assign the return value back to retain the changes.
 \description{
 Converts user-defined missing-value (UDM) codes to plain \code{NA} on
 \code{haven_labelled_spss} variables already in memory. Useful when a
-dataset has been loaded with \code{jload(..., preserve_udm = TRUE)} (the
+dataset has been loaded with \code{jload(..., preserve.udm = TRUE)} (the
 default) for round-trip fidelity but a downstream operation — typically
 a base R or non-package function — would treat the UDM codes as real
 numeric values.
@@ -50,7 +50,7 @@ UDM codes, so the variable can still round-trip through
 labelling preserved.
 }
 
-This matches the behaviour of \code{jload(file, preserve_udm = FALSE)},
+This matches the behaviour of \code{jload(file, preserve.udm = FALSE)},
 the "convert at load time" alternative. \code{jstrip_udm()} provides
 the same conversion for data already in memory.
 
@@ -78,5 +78,5 @@ MyData <- jstrip_udm(MyData, udm.notice = FALSE)
 }
 \seealso{
 \code{\link{jload}} for the load-time alternative
-(\code{preserve_udm = FALSE}).
+(\code{preserve.udm = FALSE}).
 }
