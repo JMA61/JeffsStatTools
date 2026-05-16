@@ -60,13 +60,21 @@ can still round-trip through \code{jsave()} with original
 labelling. For columns carrying Stata-style missing values
 (\code{tagged_na} markers), uses \code{haven::zap_missing()} to
 convert them to plain \code{NA}s.}
-\item{\code{to = "spss"}}{Convert Stata-style missing values to
-SPSS-form numeric codes. Letter tags map to numeric codes via
-\code{joptions("udm.convention.codes")} (default \code{-99},
-\code{-98}, \code{-97}, \code{-96}): \code{.a -> codes[1]},
-\code{.b -> codes[2]}, and so on. Letter tags beyond \code{.d}
-are refused with guidance to use \code{jrecode()} for manual
-mapping.}
+\item{\code{to = "spss"}}{Convert Stata-style or SAS-style missing
+values to SPSS-form numeric codes. Letter tags map to numeric
+codes via \code{joptions("udm.convention.codes")} (default
+\code{-99}, \code{-98}, \code{-97}, \code{-96}):
+\code{.a -> codes[1]}, \code{.b -> codes[2]}, and so on. SAS-style
+(uppercase) tags are case-corrected to Stata-style (lowercase)
+before the numeric mapping — for round-trip purposes the package
+treats \code{.A} and \code{.a} as the same conceptual marker, and
+mixed-case columns collapse to a single lowercase marker (SPSS has
+no parallel uppercase convention). The notification's per-column
+display shows the original (pre-correction) tag for SAS-corrected
+columns — e.g. \code{.A "Refused" -> -99} — so the user-visible
+mapping reflects what was actually in the data on input. Letter
+tags beyond \code{.d} (after case correction) are refused with
+guidance to use \code{jrecode()} for manual mapping.}
 \item{\code{to = "stata"}}{Convert SPSS-form numeric codes to
 Stata-style missing values. Letter tags are assigned by ordering
 rather than by convention: each column's own declared

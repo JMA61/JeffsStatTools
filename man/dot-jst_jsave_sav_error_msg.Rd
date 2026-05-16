@@ -4,11 +4,14 @@
 \alias{.jst_jsave_sav_error_msg}
 \title{Internal: build jsave's .sav pre-flight error message}
 \usage{
-.jst_jsave_sav_error_msg(vars, data_name)
+.jst_jsave_sav_error_msg(vars, data, data_name)
 }
 \arguments{
-\item{vars}{Character vector of variable names containing
-Stata-style missing values.}
+\item{vars}{Character vector of variable names containing tagged-NA
+missing values (Stata-style and/or SAS-style).}
+
+\item{data}{The data frame being saved; used to inspect tag case
+on each flagged variable so the message names the right style.}
 
 \item{data_name}{Character. Name of the data frame argument in
 the user's call to \code{jsave()}, used to construct the
@@ -18,17 +21,21 @@ suggested \code{jconvert()} call.}
 Character scalar suitable for passing to \code{stop()}.
 }
 \description{
-Produces the error message used by \code{jsave()} when Stata-style
+Produces the error message used by \code{jsave()} when tagged-NA
 missing values are encountered on a \code{.sav} write. The .sav
-format has no representation for Stata-style missing values;
-haven would otherwise silently drop the marker distinctions
-(every \code{.a}, \code{.b}, \code{.c}, ... cell becomes plain
-\code{NA} indistinguishable from any other). The user is directed
-to convert via \code{jconvert(to = "spss")} to preserve the
-distinctions as numeric codes (which \code{.sav} carries
-natively), to drop via \code{jconvert(to = "baseR")}, or to
-switch to Stata format (\code{.dta}) which represents Stata-style
-missing values natively. Verbosity is controlled by the active
-\code{joutput()} level.
+format has no representation for tagged-NA markers; haven would
+otherwise silently drop the marker distinctions (every \code{.a},
+\code{.b}, \code{.c}, ... cell becomes plain \code{NA} indistinguishable
+from any other). The user is directed to convert in advance via
+\code{jconvert(to = "spss")}, which preserves the distinctions as
+numeric codes that \code{.sav} can carry natively.
+}
+\details{
+The opening phrase is picked by inspecting the tag case of the
+flagged columns: \dQuote{Stata-style missing values} when all tags
+are lowercase (\code{.a}, \code{.b}, ...), \dQuote{SAS-style missing
+values} when all tags are uppercase (\code{.A}, \code{.B}, ...), or
+\dQuote{Stata-style or SAS-style missing values} when both cases
+appear. Verbosity is controlled by the active \code{joutput()} level.
 }
 \keyword{internal}

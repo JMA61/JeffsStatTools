@@ -4577,7 +4577,6 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL) {
   )
 
   # -- Per-variable blocks ---------------------------------------------------
-  udm_masked_vars <- pipeline$pipeline_counts$udm_masked_vars
   for (variable in variables) {
     variable_name <- rlang::quo_name(variable)
 
@@ -4598,8 +4597,20 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL) {
     if (haven::is.labelled(temp_var)) {
       label_text <- as.character(haven::as_factor(temp_var))
       codes      <- as.numeric(temp_var)
-      display_str <- ifelse(is.na(codes), NA,
-                            paste(codes, label_text, sep = ": "))
+      val_labs   <- labelled::val_labels(temp_var)
+      # When a code has no entry in val_labels, haven::as_factor falls
+      # back to the stringified value, producing display strings like
+      # "3: 3". Render those as bare code instead (Decision 7 Notes,
+      # fix (b) in the valid-row context).
+      has_label  <- if (!is.null(val_labs) && length(val_labs) > 0L) {
+        !is.na(codes) & (codes %in% unname(val_labs))
+      } else {
+        rep(FALSE, length(codes))
+      }
+      display_str <- ifelse(is.na(codes), NA_character_,
+                            ifelse(has_label,
+                                   paste(codes, label_text, sep = ": "),
+                                   as.character(codes)))
       # Map each unique display string to its underlying code for sorting
       uniq        <- !is.na(codes) & !duplicated(display_str)
       sort_codes  <- codes[uniq]
@@ -4626,56 +4637,70 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL) {
     )
 
     # Missing breakdown: UDM rows (if any) + system NA row (if any).
-    # UDM counts come from the pipeline's masking record; system NAs are
-    # whatever's left after subtracting UDM cells from the total NAs in
-    # the masked column.
-    udm_info <- udm_masked_vars[[variable_name]]
-    udm_total <- if (is.null(udm_info)) 0L else as.integer(udm_info$n_cells)
-    total_na  <- as.integer(sum(is.na(temp_var)))
-    sys_na    <- max(0L, total_na - udm_total)
+    # UDM rows are driven by .jst_missing_info() so the row format stays
+    # in sync with the load-time narrative produced by
+    # .jst_format_udm_narrative (shared-rendering-conventions principle,
+    # Decision 7). The helper returns codes-and-labels uniformly for
+    # both SPSS-form (na_values, na_range) and Stata-form (tagged_na);
+    # per-code counts are derived from the unmasked raw column.
+    raw_col   <- arg1$data[[variable_name]]
+    mi        <- .jst_missing_info(raw_col)
+    udm_rows  <- data.frame(Value = character(0), Freq = integer(0),
+                            stringsAsFactors = FALSE)
+    udm_total <- 0L
 
-    # UDM rows — one per declared code, with label when available.
-    udm_rows <- data.frame(Value = character(0), Freq = integer(0),
-                           stringsAsFactors = FALSE)
-    if (!is.null(udm_info) && length(udm_info$codes) > 0L) {
-      original_col <- data[[variable_name]]  # already masked, but val_labels intact
-      val_labs <- if (haven::is.labelled(original_col)) {
-        labelled::val_labels(original_col)
-      } else NULL
-
-      # Per-code count: count of cells whose underlying code matched the
-      # declared UDM code. Read from the pre-mask data via the user's
-      # original frame, accessed through the caller's data argument. The
-      # arg1$data carries the unmasked column even after the pipeline
-      # masking, since the pipeline returned a copy.
-      raw_col <- arg1$data[[variable_name]]
-      raw_num <- suppressWarnings(as.numeric(unclass(raw_col)))
-
-      for (code_str in udm_info$codes) {
-        # code_str may be a numeric string or a range descriptor like
-        # "range [-100, -90]" — handle each.
-        if (startsWith(code_str, "range ")) {
-          # Range-form na_range counts: not common; fold into a single row.
-          row_label <- code_str
-          row_count <- NA_integer_  # leave NA — caller can inspect column
-        } else {
-          code_num <- suppressWarnings(as.numeric(code_str))
-          row_count <- sum(!is.na(raw_num) & raw_num == code_num)
-          # Look up label
-          lbl <- if (!is.null(val_labs)) {
-            mm <- which(unname(val_labs) == code_num & !is.na(unname(val_labs)))
-            if (length(mm) > 0L) names(val_labs)[mm[1]] else NA_character_
-          } else NA_character_
-          row_label <- if (!is.na(lbl) && nzchar(lbl)) {
-            sprintf("%s: %s", code_str, lbl)
-          } else code_str
+    if (!is.null(mi)) {
+      if (identical(mi$representation, "stata")) {
+        # Stata/SAS-form: per-tag rows. haven::na_tag() distinguishes
+        # lowercase (.a, .b) from uppercase (.A, .B) markers, so SAS-
+        # style declarations land in their own rows correctly.
+        tag_vec <- haven::na_tag(raw_col)
+        for (i in seq_len(nrow(mi$codes))) {
+          r <- mi$codes[i, ]
+          row_count <- as.integer(sum(!is.na(tag_vec) & tag_vec == r$tag))
+          row_label <- if (!is.na(r$label) && nzchar(r$label)) {
+            sprintf('%s ["%s"]', r$code, r$label)
+          } else {
+            sprintf('%s (no label)', r$code)
+          }
+          udm_total <- udm_total + row_count
+          udm_rows  <- rbind(udm_rows,
+                             data.frame(Value = row_label, Freq = row_count,
+                                        stringsAsFactors = FALSE))
         }
-        udm_rows <- rbind(udm_rows,
-                          data.frame(Value = row_label,
-                                     Freq  = row_count,
-                                     stringsAsFactors = FALSE))
+      } else {
+        # SPSS-form: per-code rows plus optional range row.
+        raw_num <- suppressWarnings(as.numeric(unclass(raw_col)))
+        if (nrow(mi$codes) > 0L) {
+          for (i in seq_len(nrow(mi$codes))) {
+            r <- mi$codes[i, ]
+            row_count <- as.integer(sum(!is.na(raw_num) & raw_num == r$numeric))
+            row_label <- if (!is.na(r$label) && nzchar(r$label)) {
+              sprintf('%s ["%s"]', r$code, r$label)
+            } else {
+              sprintf('%s (no label)', r$code)
+            }
+            udm_total <- udm_total + row_count
+            udm_rows  <- rbind(udm_rows,
+                               data.frame(Value = row_label, Freq = row_count,
+                                          stringsAsFactors = FALSE))
+          }
+        }
+        if (!is.null(mi$na_range) && length(mi$na_range) == 2L) {
+          rg          <- mi$na_range
+          range_count <- as.integer(sum(!is.na(raw_num) &
+                                        raw_num >= rg[1] & raw_num <= rg[2]))
+          row_label   <- sprintf("range %s to %s", rg[1], rg[2])
+          udm_total   <- udm_total + range_count
+          udm_rows    <- rbind(udm_rows,
+                               data.frame(Value = row_label, Freq = range_count,
+                                          stringsAsFactors = FALSE))
+        }
       }
     }
+
+    total_na <- as.integer(sum(is.na(temp_var)))
+    sys_na   <- max(0L, total_na - udm_total)
 
     # System NA row
     na_row <- if (sys_na > 0L) {
@@ -10800,13 +10825,21 @@ jdeclare_udm <- function(data, var, codes, labels = NULL,
 #'     labelling. For columns carrying Stata-style missing values
 #'     (\code{tagged_na} markers), uses \code{haven::zap_missing()} to
 #'     convert them to plain \code{NA}s.}
-#'   \item{\code{to = "spss"}}{Convert Stata-style missing values to
-#'     SPSS-form numeric codes. Letter tags map to numeric codes via
-#'     \code{joptions("udm.convention.codes")} (default \code{-99},
-#'     \code{-98}, \code{-97}, \code{-96}): \code{.a -> codes[1]},
-#'     \code{.b -> codes[2]}, and so on. Letter tags beyond \code{.d}
-#'     are refused with guidance to use \code{jrecode()} for manual
-#'     mapping.}
+#'   \item{\code{to = "spss"}}{Convert Stata-style or SAS-style missing
+#'     values to SPSS-form numeric codes. Letter tags map to numeric
+#'     codes via \code{joptions("udm.convention.codes")} (default
+#'     \code{-99}, \code{-98}, \code{-97}, \code{-96}):
+#'     \code{.a -> codes[1]}, \code{.b -> codes[2]}, and so on. SAS-style
+#'     (uppercase) tags are case-corrected to Stata-style (lowercase)
+#'     before the numeric mapping — for round-trip purposes the package
+#'     treats \code{.A} and \code{.a} as the same conceptual marker, and
+#'     mixed-case columns collapse to a single lowercase marker (SPSS has
+#'     no parallel uppercase convention). The notification's per-column
+#'     display shows the original (pre-correction) tag for SAS-corrected
+#'     columns — e.g. \code{.A "Refused" -> -99} — so the user-visible
+#'     mapping reflects what was actually in the data on input. Letter
+#'     tags beyond \code{.d} (after case correction) are refused with
+#'     guidance to use \code{jrecode()} for manual mapping.}
 #'   \item{\code{to = "stata"}}{Convert SPSS-form numeric codes to
 #'     Stata-style missing values. Letter tags are assigned by ordering
 #'     rather than by convention: each column's own declared
@@ -11000,7 +11033,60 @@ jconvert <- function(data, to = NULL, ..., vars = NULL, udm.notice = TRUE) {
   code_for_tag <- .jst_tag_letters_to_codes(letter_codes, convention_codes)
   tag_for_code <- stats::setNames(letter_codes, as.character(convention_codes))
 
+  # Tracking for SAS-style (uppercase) tagged-NA case correction performed
+  # inside the to = "spss" branch. Declared at function scope so the
+  # notification builder (below) can read it regardless of which branch
+  # the call took.
+  sas_corrected_vars <- character(0)
+
   if (to == "spss") {
+    # Case-correct SAS-style tags before validating. The convention codes
+    # map lowercase letters positionally (.a -> codes[1], .b -> codes[2],
+    # ...); uppercase tags have no native SPSS-form representation. Like
+    # jsave's .dta path, jconvert treats .A and .a as the same conceptual
+    # marker for round-trip purposes, converting the former to the latter
+    # before the numeric mapping. Mixed-case columns (a column containing
+    # both .a and .A) collapse to a single .a marker — the case
+    # distinction is not preserved through SPSS-form, since SPSS has no
+    # parallel uppercase convention.
+    for (vname in names(info_list)) {
+      info <- info_list[[vname]]
+      if (info$representation != "stata") next
+      col <- data[[vname]]
+      if (!is.double(col)) next
+
+      cell_changed  <- FALSE
+      label_changed <- FALSE
+
+      tags        <- haven::na_tag(col)
+      upper_cells <- which(!is.na(tags) & tags %in% LETTERS)
+      if (length(upper_cells) > 0L) {
+        for (i in upper_cells) col[i] <- haven::tagged_na(tolower(tags[i]))
+        cell_changed <- TRUE
+      }
+
+      if (haven::is.labelled(col)) {
+        vl <- labelled::val_labels(col)
+        if (!is.null(vl) && length(vl) > 0L) {
+          lab_tags   <- haven::na_tag(vl)
+          upper_labs <- which(!is.na(lab_tags) & lab_tags %in% LETTERS)
+          if (length(upper_labs) > 0L) {
+            for (i in upper_labs) vl[i] <- haven::tagged_na(tolower(lab_tags[i]))
+            labelled::val_labels(col) <- vl
+            label_changed <- TRUE
+          }
+        }
+      }
+
+      if (cell_changed || label_changed) {
+        data[[vname]]      <- col
+        sas_corrected_vars <- c(sas_corrected_vars, vname)
+        # Refresh info_list so the downstream validation and conversion
+        # loops see post-correction tags rather than the original .A/.B.
+        info_list[[vname]] <- .jst_missing_info(col)
+      }
+    }
+
     # Stata-to-SPSS: check for letter-tag-beyond-.d and collisions.
     beyond_d_vars  <- list()
     collision_vars <- list()
@@ -11217,10 +11303,15 @@ jconvert <- function(data, to = NULL, ..., vars = NULL, udm.notice = TRUE) {
       # Build display entries — source tag -> destination code, with the
       # label on the source side. Sort by tag (a, b, c, d) for stable
       # display order regardless of order-of-appearance in the data.
+      # SAS-corrected columns display the original uppercase tag, since
+      # post-correction `.a`/`.b` would obscure what the user actually
+      # had in their data on input.
+      was_sas <- vname %in% sas_corrected_vars
       display_entries <- character(0)
       for (tg in sort(unique_tags)) {
         code <- code_for_tag[[tg]]
-        source_disp <- paste0(".", tg)
+        display_tag <- if (was_sas) toupper(tg) else tg
+        source_disp <- paste0(".", display_tag)
         lbl  <- NA_character_
         if (!is.null(val_labs) && length(val_labs) > 0L) {
           vl_tags <- haven::na_tag(val_labs)
@@ -12750,8 +12841,8 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   # --- Minimal tier -------------------------------------------------------
   if (identical(output_level, "minimal")) {
     return(paste0(
-      "jsave(): ", n_total, " ", noun, " ", verb_carry,
-      " SPSS-style missing values that .dta cannot represent. ",
+      n_total, " ", noun, " ", verb_carry,
+      " SPSS-style missing values, incompatible with the .dta format. ",
       "Run ", data_name, " <- jconvert(", data_name, ", to = \"stata\") ",
       "for enumerated codes; range-based UDMs need recoding or ",
       data_name, " <- jconvert(", data_name, ", to = \"baseR\") ",
@@ -12761,31 +12852,27 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 
   # --- Standard / full tier ----------------------------------------------
   msg <- paste0(
-    "Error in jsave(): ", n_total, " ", noun, " ", verb_carry,
-    " SPSS-style missing values that the .dta format cannot represent."
+    n_total, " ", noun, " ", verb_carry,
+    " SPSS-style missing values, incompatible with the .dta format."
   )
 
   if (length(enum_vars) > 0) {
     msg <- paste0(
       msg, "\n\n",
-      "Columns with enumerated missing-value codes (na_values):\n",
       "  ", .jst_format_var_list(enum_vars), "\n",
-      "To convert these to Stata-style missing values, run:\n",
-      "  ", data_name, " <- jconvert(", data_name, ", to = \"stata\")\n",
-      "before saving."
+      "Before saving to Stata format, convert with:\n",
+      "  ", data_name, " <- jconvert(", data_name, ", to = \"stata\")"
     )
   }
 
   if (length(range_vars) > 0) {
     msg <- paste0(
       msg, "\n\n",
-      "Columns with range-based missingness (na_range):\n",
       "  ", .jst_format_var_list(range_vars), "\n",
       "Range-based missingness cannot be converted to Stata-style. ",
-      "Either re-code the range to enumerated codes (then run ",
-      "jconvert), or run:\n",
-      "  ", data_name, " <- jconvert(", data_name, ", to = \"baseR\")\n",
-      "to drop the missing-value metadata before saving."
+      "Either re-code the range to enumerated codes (then run jconvert), ",
+      "or drop the metadata with:\n",
+      "  ", data_name, " <- jconvert(", data_name, ", to = \"baseR\")"
     )
   }
 
@@ -12823,8 +12910,8 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   # --- Minimal tier -------------------------------------------------------
   if (identical(output_level, "minimal")) {
     return(paste0(
-      "jsave(): ", n, " ", noun, " ", verb_contain,
-      " missing-value codes that .xpt cannot represent. ",
+      n, " ", noun, " ", verb_contain,
+      " missing-value codes, incompatible with the .xpt format. ",
       "Run ", data_name, " <- jconvert(", data_name, ", to = \"baseR\") ",
       "to drop them, or save as Stata format (.dta) to preserve them."
     ))
@@ -12832,8 +12919,8 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 
   # --- Standard / full tier ----------------------------------------------
   paste0(
-    "Error in jsave(): ", n, " ", noun, " ", verb_contain,
-    " missing-value codes that the .xpt format cannot represent:\n",
+    n, " ", noun, " ", verb_contain,
+    " missing-value codes, incompatible with the .xpt format:\n",
     "  ", .jst_format_var_list(vars), "\n\n",
     "To save as .xpt, drop these by running:\n",
     "  ", data_name, " <- jconvert(", data_name, ", to = \"baseR\")\n\n",
@@ -12844,21 +12931,26 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 
 #' Internal: build jsave's .sav pre-flight error message
 #'
-#' Produces the error message used by \code{jsave()} when Stata-style
+#' Produces the error message used by \code{jsave()} when tagged-NA
 #' missing values are encountered on a \code{.sav} write. The .sav
-#' format has no representation for Stata-style missing values;
-#' haven would otherwise silently drop the marker distinctions
-#' (every \code{.a}, \code{.b}, \code{.c}, ... cell becomes plain
-#' \code{NA} indistinguishable from any other). The user is directed
-#' to convert via \code{jconvert(to = "spss")} to preserve the
-#' distinctions as numeric codes (which \code{.sav} carries
-#' natively), to drop via \code{jconvert(to = "baseR")}, or to
-#' switch to Stata format (\code{.dta}) which represents Stata-style
-#' missing values natively. Verbosity is controlled by the active
-#' \code{joutput()} level.
+#' format has no representation for tagged-NA markers; haven would
+#' otherwise silently drop the marker distinctions (every \code{.a},
+#' \code{.b}, \code{.c}, ... cell becomes plain \code{NA} indistinguishable
+#' from any other). The user is directed to convert in advance via
+#' \code{jconvert(to = "spss")}, which preserves the distinctions as
+#' numeric codes that \code{.sav} can carry natively.
 #'
-#' @param vars Character vector of variable names containing
-#'   Stata-style missing values.
+#' The opening phrase is picked by inspecting the tag case of the
+#' flagged columns: \dQuote{Stata-style missing values} when all tags
+#' are lowercase (\code{.a}, \code{.b}, ...), \dQuote{SAS-style missing
+#' values} when all tags are uppercase (\code{.A}, \code{.B}, ...), or
+#' \dQuote{Stata-style or SAS-style missing values} when both cases
+#' appear. Verbosity is controlled by the active \code{joutput()} level.
+#'
+#' @param vars Character vector of variable names containing tagged-NA
+#'   missing values (Stata-style and/or SAS-style).
+#' @param data The data frame being saved; used to inspect tag case
+#'   on each flagged variable so the message names the right style.
 #' @param data_name Character. Name of the data frame argument in
 #'   the user's call to \code{jsave()}, used to construct the
 #'   suggested \code{jconvert()} call.
@@ -12866,7 +12958,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' @return Character scalar suitable for passing to \code{stop()}.
 #'
 #' @keywords internal
-.jst_jsave_sav_error_msg <- function(vars, data_name) {
+.jst_jsave_sav_error_msg <- function(vars, data, data_name) {
 
   output_level <- getOption(".jst_output_level", "standard")
   n            <- length(vars)
@@ -12874,32 +12966,47 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   noun         <- if (is_sg) "variable" else "variables"
   verb_contain <- if (is_sg) "contains" else "contain"
 
+  # Inspect tag case across the flagged columns to pick the right
+  # style phrase. Stata convention uses lowercase letters (.a, .b, ...);
+  # SAS convention uses uppercase (.A, .B, ...); both can in principle
+  # coexist either across columns or within a single column.
+  has_lower <- FALSE
+  has_upper <- FALSE
+  for (v in vars) {
+    col <- data[[v]]
+    if (is.double(col)) {
+      tags <- unique(haven::na_tag(col))
+      tags <- tags[!is.na(tags)]
+      if (any(grepl("[a-z]", tags))) has_lower <- TRUE
+      if (any(grepl("[A-Z]", tags))) has_upper <- TRUE
+    }
+  }
+  style_phrase <- if (has_lower && has_upper) {
+    "Stata-style or SAS-style missing values"
+  } else if (has_upper) {
+    "SAS-style missing values"
+  } else {
+    "Stata-style missing values"
+  }
+
   # --- Minimal tier -------------------------------------------------------
   if (identical(output_level, "minimal")) {
     return(paste0(
-      "jsave(): ", n, " ", noun, " ", verb_contain,
-      " Stata-style missing values, which .sav cannot represent. ",
-      "Run ", data_name, " <- jconvert(", data_name, ", to = \"spss\") ",
-      "to preserve them as SPSS-style codes, or to = \"baseR\" to ",
-      "drop them. Saving as Stata format (.dta) also preserves them ",
-      "natively."
+      n, " ", noun, " ", verb_contain, " ",
+      style_phrase, ", incompatible with the .sav format. ",
+      "Before saving, convert with ",
+      data_name, " <- jconvert(", data_name, ", to = \"spss\")."
     ))
   }
 
   # --- Standard / full tier ----------------------------------------------
   paste0(
-    "Error in jsave(): ", n, " ", noun, " ", verb_contain,
-    " Stata-style missing values, which the .sav format cannot ",
-    "represent:\n",
+    n, " ", noun, " ", verb_contain, " ",
+    style_phrase, ", incompatible with the .sav format:\n",
     "  ", .jst_format_var_list(vars), "\n\n",
-    "To save as .sav with the missing-value codes preserved, run:\n",
-    "  ", data_name, " <- jconvert(", data_name, ", to = \"spss\")\n",
-    "This converts the Stata-style values to numeric codes ",
-    "(-99, -98, ...) with na_values declarations attached.\n\n",
-    "Alternatively, to drop the missing-value distinctions, run:\n",
-    "  ", data_name, " <- jconvert(", data_name, ", to = \"baseR\")\n\n",
-    "Or save as Stata format (.dta) instead, which represents ",
-    "Stata-style missing values natively."
+    "Before saving to SPSS format, convert to SPSS-style missing values ",
+    "with:\n",
+    "  ", data_name, " <- jconvert(", data_name, ", to = \"spss\")"
   )
 }
 
@@ -13219,16 +13326,16 @@ jsave <- function(data, file, overwrite = FALSE) {
     }
   }
 
-  # --- .sav pre-flight: Stata-style missing values ---------------------------
-  # The .sav format has no representation for Stata-style missing values;
-  # haven would otherwise silently drop the marker distinctions on write.
-  # The pre-flight names the affected variables and offers three paths:
-  # preserve via jconvert(to = "spss"), drop via jconvert(to = "baseR"),
-  # or switch to Stata format (.dta) which represents them natively.
+  # --- .sav pre-flight: tagged-NA missing values -----------------------------
+  # The .sav format has no representation for tagged-NA markers; haven
+  # would otherwise silently drop the marker distinctions on write. The
+  # pre-flight names the affected variables and directs the user to
+  # convert via jconvert(to = "spss") before saving, which preserves the
+  # distinctions as numeric codes that .sav can carry natively.
   if (ext == "sav") {
     tagged_vars <- .jst_has_tagged_na(data)
     if (length(tagged_vars) > 0) {
-      stop(.jst_jsave_sav_error_msg(tagged_vars, data_name),
+      stop(.jst_jsave_sav_error_msg(tagged_vars, data, data_name),
            call. = FALSE)
     }
   }

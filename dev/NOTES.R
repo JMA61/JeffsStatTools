@@ -13,6 +13,7 @@ devtools::document()  # regenerates the .Rd help files and NAMESPACE from roxyge
 # it does not show up in the final 0/0/0 tally and is not a real error
 devtools::check()
 
+
 ## adds CRAN-incoming checks that require internet
 ## — URL validation in DESCRIPTION/roxygen, version-number feasibility against current CRAN,
 ##  and a few other release-readiness checks.
