@@ -4,13 +4,19 @@
 \alias{joptions}
 \title{Set or display session-level package options}
 \usage{
-joptions(missing.convention = NULL, udm.convention.codes = NULL)
+joptions(
+  missing.convention = NULL,
+  udm.convention.codes = NULL,
+  data.dir = NULL
+)
 }
 \arguments{
 \item{missing.convention}{One of \code{"none"}, \code{"spss"}, or
 \code{"stata"}. See Slots.}
 
 \item{udm.convention.codes}{Numeric vector, length 1 to 4. See Slots.}
+
+\item{data.dir}{Character string (length 1), or \code{NULL}. See Slots.}
 }
 \value{
 Invisibly returns \code{NULL}. Called for the side effect of
@@ -42,6 +48,15 @@ by \code{\link{jconvert}} when translating Stata-style missing values
 (\code{.a}, \code{.b}, \code{.c}, \code{.d}) into SPSS-form
 numeric codes, and by the load-time diagnostic for
 convention-matched detection.}
+\item{data.dir}{Character string (length 1), or \code{NULL}. Default:
+\code{NULL}. When \code{NULL}, \code{\link{jsave}} writes
+bare-filename saves to the working directory and \code{\link{jload}}
+searches the working directory. When set, names a folder (relative
+to the working directory) used as both the save target for
+bare-filename saves and as the first directory searched on
+bare-filename loads. The folder is auto-created on first save if
+it doesn't already exist. Filenames containing a directory
+separator (\code{/}) bypass this setting and are taken literally.}
 }
 }
 
@@ -76,6 +91,7 @@ standard form -- do not trigger the notice.
 joptions()                                        # show current settings
 joptions(missing.convention = "spss")             # set, panel, nudge
 joptions(udm.convention.codes = c(-99, -98))      # set, panel, no nudge
+joptions(data.dir = "Data")                       # set save/load folder
 joptions(missing.convention = "stata",
          udm.convention.codes = c(-99, -98, -97)) # set both
 joptions(missing.convention = "spss",

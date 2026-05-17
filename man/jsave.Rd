@@ -33,9 +33,12 @@ provide --- for example, \code{"mydata.sav"} saves as SPSS,
 \code{"mydata.dta"} saves as Stata, and \code{"mydata.xlsx"} saves
 as Excel. Changing the extension changes the format.
 
-By default, \code{jsave()} writes to a \code{Data/} subfolder. If a
-\code{Data/} (or \code{data/}) folder already exists, it is used. If
-neither exists, a \code{Data/} folder is created automatically.
+By default, \code{jsave()} writes bare-filename saves to the working
+directory, matching base R's \code{saveRDS()} and \code{write.csv()}.
+To save into a subfolder, set \code{\link{joptions}(data.dir = "...")}
+once per session (or in \code{.Rprofile}). Filenames containing a
+directory separator (\code{/}) bypass this setting and are taken
+literally.
 
 If the \code{data} argument is omitted, the default data frame set by
 \code{juse()} is used.
@@ -50,9 +53,15 @@ R does not accept single backslashes in file paths.
 \itemize{
 \item If the path contains a directory separator, the file is saved
 to that exact location.
-\item If the path is a bare filename, \code{jsave()} writes to the
-\code{Data/} subfolder (using an existing one, or creating one
-if neither \code{Data/} nor \code{data/} exists).
+\item If the path is a bare filename and \code{joptions("data.dir")}
+is set, the file is saved to that folder (auto-created if it
+doesn't yet exist).
+\item If the path is a bare filename and \code{joptions("data.dir")}
+is unset (the default), the file is saved to the working
+directory. During the transition window following the May 2026
+redesign, an existing \code{Data/} or \code{data/} folder in the
+working directory will still be used if present, preserving
+compatibility with earlier versions of the package.
 }
 
 \strong{Format notes:}

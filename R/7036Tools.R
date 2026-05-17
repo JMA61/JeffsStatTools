@@ -1120,9 +1120,19 @@
 #                          by jconvert for Stata-tag -> SPSS-code mapping
 #                          and by .jst_scan_coded_missing for
 #                          convention-matched detection.
+#   data.dir             - single character string, or NULL. NULL =
+#                          jsave writes bare-filename saves to the
+#                          working directory; jload bare-filename
+#                          searches the working directory. Setting a
+#                          value names a folder (relative to working
+#                          directory) used for both save target and
+#                          load search. See .jst_get_search_dirs() and
+#                          jsave for transition-period backwards-compat
+#                          handling of legacy Data/ or data/ folders.
 .jst_options_defaults <- list(
   missing.convention   = "none",
-  udm.convention.codes = c(-99, -98, -97, -96)
+  udm.convention.codes = c(-99, -98, -97, -96),
+  data.dir             = NULL
 )
 
 #' Internal helper: resolve a display toggle value
@@ -3881,6 +3891,8 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
                   .jst_options_defaults$missing.convention)
   cc <- getOption(".jst_options_udm_convention_codes",
                   .jst_options_defaults$udm.convention.codes)
+  dd <- getOption(".jst_options_data_dir",
+                  .jst_options_defaults$data.dir)
 
   # Map the slot value to a user-facing label. "none" reads as "None
   # selected" so users understand they're in the no-auto-conversion
@@ -3891,10 +3903,16 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
                      stata = "Stata",
                      mc)
 
+  # data.dir: NULL displays as "Working directory" for parallelism with
+  # the "None selected" reading of missing.convention. A set value
+  # displays as-is.
+  dd_label <- if (is.null(dd)) "Working directory" else dd
+
   .cat_red("Options Settings\n")
   cat("User-defined missing values (UDMs) convention: ", mc_label,
       "\n", sep = "")
   cat("UDM convention codes: ", paste(cc, collapse = ", "), "\n", sep = "")
+  cat("Data folder: ", dd_label, "\n", sep = "")
   cat("\n")
 }
 
@@ -3977,6 +3995,15 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 #'     (\code{.a}, \code{.b}, \code{.c}, \code{.d}) into SPSS-form
 #'     numeric codes, and by the load-time diagnostic for
 #'     convention-matched detection.}
+#'   \item{data.dir}{Character string (length 1), or \code{NULL}. Default:
+#'     \code{NULL}. When \code{NULL}, \code{\link{jsave}} writes
+#'     bare-filename saves to the working directory and \code{\link{jload}}
+#'     searches the working directory. When set, names a folder (relative
+#'     to the working directory) used as both the save target for
+#'     bare-filename saves and as the first directory searched on
+#'     bare-filename loads. The folder is auto-created on first save if
+#'     it doesn't already exist. Filenames containing a directory
+#'     separator (\code{/}) bypass this setting and are taken literally.}
 #' }
 #'
 #' @section Call patterns:
@@ -4005,6 +4032,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 #' @param missing.convention One of \code{"none"}, \code{"spss"}, or
 #'   \code{"stata"}. See Slots.
 #' @param udm.convention.codes Numeric vector, length 1 to 4. See Slots.
+#' @param data.dir Character string (length 1), or \code{NULL}. See Slots.
 #'
 #' @return Invisibly returns \code{NULL}. Called for the side effect of
 #'   updating session options and printing the status panel.
@@ -4013,6 +4041,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 #' joptions()                                        # show current settings
 #' joptions(missing.convention = "spss")             # set, panel, nudge
 #' joptions(udm.convention.codes = c(-99, -98))      # set, panel, no nudge
+#' joptions(data.dir = "Data")                       # set save/load folder
 #' joptions(missing.convention = "stata",
 #'          udm.convention.codes = c(-99, -98, -97)) # set both
 #' joptions(missing.convention = "spss",
@@ -4023,36 +4052,41 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 #'   \code{\link{JeffsStatTools}} for the package overview.
 #'
 #' @export
-joptions <- function(missing.convention = NULL, udm.convention.codes = NULL) {
+joptions <- function(missing.convention = NULL, udm.convention.codes = NULL,
+                     data.dir = NULL) {
 
   mc_supplied <- !missing(missing.convention)
   cc_supplied <- !missing(udm.convention.codes)
+  dd_supplied <- !missing(data.dir)
 
   # joptions() -- no args, status only
-  if (!mc_supplied && !cc_supplied) {
+  if (!mc_supplied && !cc_supplied && !dd_supplied) {
     .jst_options_status()
     return(invisible(NULL))
   }
 
-  # Distinguish positional NULL (reset) from named NULL (leave alone) by
-  # inspecting the raw call. match.call() would have rewritten
-  # joptions(NULL) to joptions(missing.convention = NULL), erasing the
-  # distinction; sys.call() preserves it.
-  raw_names <- names(sys.call())
-  if (!is.null(raw_names)) raw_names <- raw_names[-1L]   # drop function-name slot
-  positional_first <- length(raw_names) >= 1L &&
-                      (is.null(raw_names) || raw_names[1L] == "")
+  # Distinguish joptions(NULL) (reset all) from joptions(slot = NULL)
+  # (leave that slot alone). The reset call has a single positional NULL
+  # argument; match.call() would have rewritten that to
+  # joptions(missing.convention = NULL) and erased the distinction, so
+  # we inspect sys.call() directly. Detected shape: exactly one supplied
+  # argument, unnamed in the source call, and NULL in value.
+  call_args <- as.list(sys.call())[-1L]
+  positional_null_reset <- length(call_args) == 1L &&
+                           (is.null(names(call_args)) ||
+                            names(call_args) == "") &&
+                           is.null(call_args[[1L]])
 
-  # joptions(NULL) -- single positional NULL, reset all
-  if (mc_supplied && !cc_supplied &&
-      is.null(missing.convention) && positional_first) {
+  # joptions(NULL) -- reset all
+  if (positional_null_reset) {
     options(.jst_options_missing_convention   = NULL)
     options(.jst_options_udm_convention_codes = NULL)
+    options(.jst_options_data_dir             = NULL)
     .jst_options_status()
     return(invisible(NULL))
   }
 
-  # Validate (atomic) -- both checks pass before any options() write
+  # Validate (atomic) -- all checks pass before any options() write
   if (mc_supplied && !is.null(missing.convention)) {
     if (!is.character(missing.convention) ||
         length(missing.convention) != 1L ||
@@ -4072,6 +4106,15 @@ joptions <- function(missing.convention = NULL, udm.convention.codes = NULL) {
     if (anyDuplicated(x) > 0L)
       stop("udm.convention.codes must contain no duplicates.", call. = FALSE)
   }
+  if (dd_supplied && !is.null(data.dir)) {
+    if (!is.character(data.dir) ||
+        length(data.dir) != 1L ||
+        is.na(data.dir) ||
+        nchar(trimws(data.dir)) == 0L) {
+      stop("data.dir must be a single non-empty character string, or NULL.",
+           call. = FALSE)
+    }
+  }
 
   # Write -- only supplied non-NULL args; NULL means "leave alone"
   trigger_nudge <- FALSE
@@ -4081,6 +4124,9 @@ joptions <- function(missing.convention = NULL, udm.convention.codes = NULL) {
   }
   if (cc_supplied && !is.null(udm.convention.codes)) {
     options(.jst_options_udm_convention_codes = udm.convention.codes)
+  }
+  if (dd_supplied && !is.null(data.dir)) {
+    options(.jst_options_data_dir = data.dir)
   }
 
   # Status panel, then nudge (per Session 28 Item 1 decision)
@@ -11682,7 +11728,10 @@ jconvert <- function(data, to = NULL, ..., vars = NULL, udm.notice = TRUE) {
 #'   \item If the path contains a directory separator (\code{/}), the path
 #'     is used directly.
 #'   \item If the path is a bare filename, \code{jload()} checks:
-#'     (a) \code{Data/} subfolder, (b) \code{data/} subfolder,
+#'     (a) the folder named by \code{joptions("data.dir")} if it is set
+#'     and exists; (b) during the transition window following the May
+#'     2026 redesign, any legacy \code{Data/} or \code{data/} folder in
+#'     the working directory (compatibility with earlier versions);
 #'     (c) the working directory.
 #' }
 #'
@@ -11752,7 +11801,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   # --- Validate file argument ------------------------------------------------
   if (missing(file) || !is.character(file) || length(file) != 1 ||
       nchar(trimws(file)) == 0) {
-    stop("Please provide a filename, e.g. jload(\"mydata.sav\")", call. = FALSE)
+    stop("Provide a filename, e.g. jload(\"mydata.sav\")", call. = FALSE)
   }
 
   # --- Determine if file has a directory component ---------------------------
@@ -11801,7 +11850,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
       msg <- paste0(
         "Multiple files found matching '", file, "':\n",
         paste0("  ", found, collapse = "\n"), "\n",
-        "Please include the file extension to specify which one."
+        "Include the file extension to specify which one."
       )
       stop(msg, call. = FALSE)
     }
@@ -11818,7 +11867,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
       "  .xlsx      Excel\n",
       "  .xls       Excel (legacy)\n",
       "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
+      "  .rds       R native",
       call. = FALSE
     )
   }
@@ -11847,7 +11896,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     stop(
       "The filename '", basename(file), "' starts with a number. ",
       "R does not allow variable names to start with a digit.\n",
-      "Please provide a name, e.g.:\n",
+      "Provide a name, e.g.:\n",
       "  jload(\"", file, "\", name = \"",
       gsub("^[0-9]+", "", obj_name), "\")",
       call. = FALSE
@@ -11950,9 +11999,10 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 
   # --- Summary message -------------------------------------------------------
   message(
-    "Loaded ", obj_name, ": ",
+    "Loaded ", obj_name,
+    " (", .jst_format_label(ext), "; ",
     format(nrow(df), big.mark = ","), " cases, ",
-    ncol(df), " variables"
+    ncol(df), " variables)"
   )
 
   # --- Set as default with juse() if requested -------------------------------
@@ -12015,6 +12065,32 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     normalizePath(p, winslash = "/", mustWork = FALSE),
     error = function(e) p
   )
+}
+
+#' Internal: map a file extension to its user-facing format label
+#'
+#' Returns the format-name parenthetical used in jload and jsave
+#' success messages -- e.g. \code{"Stata format"} for \code{.dta},
+#' \code{"R native format"} for \code{.rds}. Centralises the mapping
+#' so both functions stay in sync, and so the labels can be edited
+#' in one place if the wording is later refined.
+#'
+#' Unknown extensions fall back to \code{<ext> format} (e.g.
+#' \code{"foo format"}), which keeps the message structurally sound
+#' even if a new extension is added without updating this helper.
+#'
+#' @keywords internal
+.jst_format_label <- function(ext) {
+  switch(tolower(ext),
+         sav      = "SPSS format",
+         dta      = "Stata format",
+         sas7bdat = "SAS format",
+         xpt      = "SAS transport format",
+         xlsx     = "Excel format",
+         xls      = "Excel (legacy) format",
+         csv      = "CSV format",
+         rds      = "R native format",
+         paste0(ext, " format"))
 }
 
 #' Internal: read missing-value declarations from a column
@@ -12453,17 +12529,46 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 }
 
 #' Internal: get the ordered list of directories to search for data files
+#'
+#' Resolution rules:
+#' - If \code{joptions("data.dir")} is set and that folder exists, it is
+#'   searched first.
+#' - Otherwise, during the transition window (until 2026-06 cleanup),
+#'   any legacy \code{Data/} or \code{data/} folder in the working
+#'   directory is searched. This is backwards-compat for users with
+#'   folders created by earlier versions where jsave auto-created them.
+#' - The working directory itself is always included as the final
+#'   search location.
+#'
 #' @keywords internal
 .jst_get_search_dirs <- function() {
-  dirs <- c(".")
-  if (dir.exists("Data")) dirs <- c("Data", dirs)
-  if (dir.exists("data") && !dir.exists("Data")) dirs <- c("data", dirs)
-  # If both Data/ and data/ exist (unusual), check both — Data/ first
-  if (dir.exists("Data") && dir.exists("data") &&
-      !identical(normalizePath("Data"), normalizePath("data"))) {
-    dirs <- c("Data", "data", ".")
+  data_dir <- getOption(".jst_options_data_dir",
+                        .jst_options_defaults$data.dir)
+  dirs <- character(0)
+
+  if (!is.null(data_dir)) {
+    # Explicit data.dir set — search there if it exists. No case-insensitive
+    # fallback: an explicit "MyFolder" will not silently match "myfolder".
+    if (dir.exists(data_dir)) dirs <- c(dirs, data_dir)
+  } else {
+    # >>> TRANSITION BLOCK — remove after 2026-06 course-end cleanup <<<
+    # Backwards-compat for users with Data/ or data/ folders created by
+    # earlier versions where jsave auto-created them. Once removed, the
+    # NULL-default case adds nothing to dirs and the working directory
+    # alone is searched.
+    has_Data <- dir.exists("Data")
+    has_data <- dir.exists("data")
+    same_folder <- has_Data && has_data &&
+                   identical(normalizePath("Data", mustWork = FALSE),
+                             normalizePath("data", mustWork = FALSE))
+    if (has_Data) dirs <- c(dirs, "Data")
+    if (has_data && !same_folder) dirs <- c(dirs, "data")
+    # >>> END TRANSITION BLOCK <<<
   }
-  return(dirs)
+
+  # Working directory is always searched last, matching base-R conventions.
+  dirs <- c(dirs, ".")
+  dirs
 }
 
 #' Internal: find a bare filename in Data/, data/, or working directory
@@ -13124,9 +13229,12 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' \code{"mydata.dta"} saves as Stata, and \code{"mydata.xlsx"} saves
 #' as Excel. Changing the extension changes the format.
 #'
-#' By default, \code{jsave()} writes to a \code{Data/} subfolder. If a
-#' \code{Data/} (or \code{data/}) folder already exists, it is used. If
-#' neither exists, a \code{Data/} folder is created automatically.
+#' By default, \code{jsave()} writes bare-filename saves to the working
+#' directory, matching base R's \code{saveRDS()} and \code{write.csv()}.
+#' To save into a subfolder, set \code{\link{joptions}(data.dir = "...")}
+#' once per session (or in \code{.Rprofile}). Filenames containing a
+#' directory separator (\code{/}) bypass this setting and are taken
+#' literally.
 #'
 #' If the \code{data} argument is omitted, the default data frame set by
 #' \code{juse()} is used.
@@ -13154,9 +13262,15 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' \itemize{
 #'   \item If the path contains a directory separator, the file is saved
 #'     to that exact location.
-#'   \item If the path is a bare filename, \code{jsave()} writes to the
-#'     \code{Data/} subfolder (using an existing one, or creating one
-#'     if neither \code{Data/} nor \code{data/} exists).
+#'   \item If the path is a bare filename and \code{joptions("data.dir")}
+#'     is set, the file is saved to that folder (auto-created if it
+#'     doesn't yet exist).
+#'   \item If the path is a bare filename and \code{joptions("data.dir")}
+#'     is unset (the default), the file is saved to the working
+#'     directory. During the transition window following the May 2026
+#'     redesign, an existing \code{Data/} or \code{data/} folder in the
+#'     working directory will still be used if present, preserving
+#'     compatibility with earlier versions of the package.
 #' }
 #'
 #' \strong{Format notes:}
@@ -13196,9 +13310,25 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' @export
 jsave <- function(data, file, overwrite = FALSE) {
 
+  # --- Pre-check: bare symbol that doesn't exist ----------------------------
+  # The shared resolver (.jst_resolve_first_arg) frames a non-existent
+  # bare symbol as a possible variable-name attempt -- appropriate for
+  # data-first analytic functions like jdesc/jfreq/jcorr where bare
+  # symbols ARE variable names from the juse default. jsave has no
+  # variable-name semantics (its first argument must be a data frame),
+  # so we intercept the bare-symbol-not-found case here and produce a
+  # jsave-tailored error before the shared resolver runs.
+  data_sub <- substitute(data)
+  if (!missing(data) && is.symbol(data_sub) &&
+      !exists(as.character(data_sub), envir = parent.frame())) {
+    stop("'", as.character(data_sub), "' not found. ",
+         "Provide a data frame, e.g. jsave(MyData, \"mydata.sav\")",
+         call. = FALSE)
+  }
+
   # --- Resolve first argument -----------------------------------------------
   arg1 <- .jst_resolve_first_arg(
-    data_sub      = substitute(data),
+    data_sub      = data_sub,
     data_missing  = missing(data),
     fn_name       = "jsave",
     envir         = parent.frame(),
@@ -13232,14 +13362,14 @@ jsave <- function(data, file, overwrite = FALSE) {
   if (missing(file) || !is.character(file) || length(file) != 1 ||
       nchar(trimws(file)) == 0) {
     stop(
-      "Please provide a filename with extension, e.g. jsave(MyData, \"mydata.sav\")\n",
+      "Provide a filename with extension, e.g. jsave(MyData, \"mydata.sav\")\n",
       "Supported formats:\n",
       "  .sav       SPSS\n",
       "  .dta       Stata\n",
       "  .xpt       SAS transport\n",
       "  .xlsx      Excel\n",
       "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
+      "  .rds       R native",
       call. = FALSE
     )
   }
@@ -13248,17 +13378,11 @@ jsave <- function(data, file, overwrite = FALSE) {
   ext <- tolower(tools::file_ext(file))
 
   if (ext == "") {
-    stop(
-      "No file extension provided. Please include an extension to specify ",
-      "the format:\n",
-      "  .sav       SPSS\n",
-      "  .dta       Stata\n",
-      "  .xpt       SAS transport\n",
-      "  .xlsx      Excel\n",
-      "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
-      call. = FALSE
-    )
+    # Default to .rds when no extension supplied. Matches base R's
+    # saveRDS() convention; the format is appended to the filename so
+    # the on-disk artefact carries the extension that jload() expects.
+    file <- paste0(file, ".rds")
+    ext  <- "rds"
   }
 
   supported_ext <- c("sav", "dta", "csv", "rds", "xpt", "xlsx")
@@ -13278,7 +13402,7 @@ jsave <- function(data, file, overwrite = FALSE) {
       "  .xpt       SAS transport\n",
       "  .xlsx      Excel\n",
       "  .csv       Comma-separated values\n",
-      "  .rds       R data (single object)",
+      "  .rds       R native",
       xls_msg,
       call. = FALSE
     )
@@ -13295,15 +13419,34 @@ jsave <- function(data, file, overwrite = FALSE) {
       stop("Directory does not exist: ", .jst_norm_path(out_dir), call. = FALSE)
     }
   } else {
-    # Bare filename — write to Data/ (create if needed)
-    if (!dir.exists("Data") && !dir.exists("data")) {
-      dir.create("Data")
-      message("Created 'Data' folder in working directory.")
-      out_path <- file.path("Data", file)
-    } else if (dir.exists("Data")) {
-      out_path <- file.path("Data", file)
+    # Bare filename — resolve via data.dir.
+    data_dir <- getOption(".jst_options_data_dir",
+                          .jst_options_defaults$data.dir)
+
+    if (is.null(data_dir)) {
+      # data.dir unset.
+      #
+      # >>> TRANSITION BLOCK — remove after 2026-06 course-end cleanup <<<
+      # Backwards-compat: write to an existing Data/ or data/ folder if
+      # present (preserves prior behaviour for users with folders
+      # auto-created by earlier versions). No auto-create — the
+      # post-cleanup behaviour is "write to working directory" and we
+      # apply that whenever the legacy folders don't exist.
+      if (dir.exists("Data")) {
+        out_path <- file.path("Data", file)
+      } else if (dir.exists("data")) {
+        out_path <- file.path("data", file)
+      } else {
+        out_path <- file
+      }
+      # >>> END TRANSITION BLOCK (post-cleanup: out_path <- file) <<<
     } else {
-      out_path <- file.path("data", file)
+      # Explicit data.dir — write to that folder, creating it if needed.
+      if (!dir.exists(data_dir)) {
+        dir.create(data_dir)
+        message("Created '", data_dir, "' folder in working directory.")
+      }
+      out_path <- file.path(data_dir, file)
     }
   }
 
@@ -13452,7 +13595,8 @@ jsave <- function(data, file, overwrite = FALSE) {
   # --- Confirmation message --------------------------------------------------
   message(
     "Saved ", data_name, " to ", .jst_norm_path(out_path),
-    " (", format(nrow(data), big.mark = ","), " cases, ",
+    " (", .jst_format_label(ext), "; ",
+    format(nrow(data), big.mark = ","), " cases, ",
     ncol(data), " variables)"
   )
 

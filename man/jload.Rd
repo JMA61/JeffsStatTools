@@ -91,7 +91,10 @@ R does not accept single backslashes in file paths.
 \item If the path contains a directory separator (\code{/}), the path
 is used directly.
 \item If the path is a bare filename, \code{jload()} checks:
-(a) \code{Data/} subfolder, (b) \code{data/} subfolder,
+(a) the folder named by \code{joptions("data.dir")} if it is set
+and exists; (b) during the transition window following the May
+2026 redesign, any legacy \code{Data/} or \code{data/} folder in
+the working directory (compatibility with earlier versions);
 (c) the working directory.
 }
 
