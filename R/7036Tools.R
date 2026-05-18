@@ -13310,20 +13310,69 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' @export
 jsave <- function(data, file, overwrite = FALSE) {
 
-  # --- Pre-check: bare symbol that doesn't exist ----------------------------
-  # The shared resolver (.jst_resolve_first_arg) frames a non-existent
-  # bare symbol as a possible variable-name attempt -- appropriate for
-  # data-first analytic functions like jdesc/jfreq/jcorr where bare
-  # symbols ARE variable names from the juse default. jsave has no
-  # variable-name semantics (its first argument must be a data frame),
-  # so we intercept the bare-symbol-not-found case here and produce a
-  # jsave-tailored error before the shared resolver runs.
+  # --- Pre-check: first argument must be a data frame -----------------------
+  # The shared resolver (.jst_resolve_first_arg) frames a non-evaluating
+  # bare symbol or a non-data-frame value as a possible variable-name
+  # attempt -- appropriate for data-first analytic functions like
+  # jdesc/jfreq/jcorr where bare symbols ARE variable names under the
+  # juse default. jsave has no variable-name semantics (its first
+  # argument must be a data frame), so we intercept the problematic
+  # cases here and produce jsave-tailored errors before the shared
+  # resolver runs.
+  #
+  # Cases intercepted:
+  #   1. Bare symbol that doesn't exist (e.g. jsave(BadName, "x.rds"))
+  #   2. Expression that fails to evaluate
+  #   3. Expression that evaluates to NULL (e.g. jsave(SampleData$BadCol,
+  #      "x.rds") -- $-access on a missing column returns NULL rather
+  #      than erroring)
+  #   4. Value that is neither a data frame nor a string (e.g.
+  #      jsave(42, "x.rds"), jsave(some_list, "x.rds"))
+  #
+  # Strings are deliberately allowed through: when juse() is set, a
+  # string in the first slot is the valid "data omitted, route string
+  # to file slot" idiom handled by the resolver's symbol_with_default
+  # mode (e.g. jsave("test.rds") after juse(MyData)). A literal NULL in
+  # the first slot is also passed through, since the resolver has a
+  # dedicated message for that case.
   data_sub <- substitute(data)
-  if (!missing(data) && is.symbol(data_sub) &&
-      !exists(as.character(data_sub), envir = parent.frame())) {
-    stop("'", as.character(data_sub), "' not found. ",
-         "Provide a data frame, e.g. jsave(MyData, \"mydata.sav\")",
-         call. = FALSE)
+  if (!missing(data) && !is.null(data_sub)) {
+
+    # Case 1: bare symbol that doesn't exist
+    if (is.symbol(data_sub) &&
+        !exists(as.character(data_sub), envir = parent.frame())) {
+      stop("'", as.character(data_sub), "' not found. ",
+           "Provide a data frame, e.g. jsave(MyData, \"mydata.sav\")",
+           call. = FALSE)
+    }
+
+    # Cases 2-4: evaluate the first argument and inspect the value
+    eval_result <- tryCatch(
+      list(value = eval(data_sub, envir = parent.frame()), failed = FALSE),
+      error = function(e) list(value = NULL, failed = TRUE)
+    )
+
+    if (eval_result$failed) {
+      data_str <- paste(deparse(data_sub), collapse = "")
+      stop("'", data_str, "' could not be evaluated. ",
+           "Provide a data frame, e.g. jsave(MyData, \"mydata.sav\")",
+           call. = FALSE)
+    }
+
+    val <- eval_result$value
+    if (is.null(val)) {
+      data_str <- paste(deparse(data_sub), collapse = "")
+      stop("'", data_str, "' is NULL. ",
+           "Provide a data frame, e.g. jsave(MyData, \"mydata.sav\")",
+           call. = FALSE)
+    }
+    if (!is.data.frame(val) && !is.character(val)) {
+      data_str   <- paste(deparse(data_sub), collapse = "")
+      class_desc <- paste(class(val), collapse = "/")
+      stop("'", data_str, "' is a ", class_desc, ", not a data frame. ",
+           "Provide a data frame, e.g. jsave(MyData, \"mydata.sav\")",
+           call. = FALSE)
+    }
   }
 
   # --- Resolve first argument -----------------------------------------------
