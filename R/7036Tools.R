@@ -520,6 +520,73 @@
   options(.jst_dummy = all_dummy)
 }
 
+#' Internal helper: render a pipeline-state clear message
+#'
+#' Shared formatter for the \code{(NULL)} clear messages of
+#' \code{jsubset()}, \code{jcomplete()}, and \code{jdummy()}. Owns the
+#' collapse layout so the three setters stay byte-identical: one data
+#' frame renders on a single line; two or more render a header line plus
+#' one indented \code{"  - "} line per data frame.
+#'
+#' @param fn_label Character function label used in the message prefix
+#'   (e.g. \code{"jsubset"}).
+#' @param dnames Character vector of data frame names being cleared.
+#' @param payloads Character vector, parallel to \code{dnames}, giving the
+#'   parenthesised "what was lost" text for each frame (e.g.
+#'   \code{"had: Age < 40"} or \code{"had 2 registered: Religion, Region"}).
+#'
+#' @return \code{invisible(NULL)}. Called for its message side effect.
+#'
+#' @keywords internal
+.jst_render_clear <- function(fn_label, dnames, payloads) {
+  n <- length(dnames)
+  if (n == 1L) {
+    message(fn_label, " cleared for ", dnames[1L], " (", payloads[1L], ").")
+  } else {
+    lines <- paste0("  - ", dnames, " (", payloads, ")")
+    message(fn_label, " cleared (", n, " data frames):\n",
+            paste(lines, collapse = "\n"))
+  }
+  invisible(NULL)
+}
+
+#' Internal helper: render a pipeline-state session-wide status overview
+#'
+#' Shared formatter for the two-or-more-frame status overview of
+#' \code{jsubset()} and \code{jcomplete()} (the toggleable setters). Renders
+#' a header line plus one indented \code{"  - "} line per data frame, each
+#' tagged \code{[active]} / \code{[inactive]} and marked \code{, default}
+#' for the current \code{juse()} default. The zero- and one-frame cases stay
+#' with the callers, since their single-line wording differs (and
+#' \code{jcomplete} appends a live complete-case count there). \code{jdummy}
+#' does not use this helper: it has no active/inactive toggle and its
+#' overview header reads "registrations" rather than "settings".
+#'
+#' @param fn_label Character function label (e.g. \code{"jsubset"}).
+#' @param dnames Character vector of data frame names.
+#' @param payloads Character vector, parallel to \code{dnames}, giving the
+#'   per-frame payload shown after the colon (the expression for
+#'   \code{jsubset}; the comma-joined variable list for \code{jcomplete}).
+#' @param active Logical vector, parallel to \code{dnames}, TRUE when the
+#'   setting is active.
+#' @param default_name Character name of the current \code{juse()} default,
+#'   or \code{NULL}. The matching frame is tagged \code{, default}.
+#'
+#' @return \code{invisible(NULL)}. Called for its message side effect.
+#'
+#' @keywords internal
+.jst_render_status_overview <- function(fn_label, dnames, payloads, active,
+                                        default_name = NULL) {
+  tags   <- ifelse(active, "active", "inactive")
+  is_def <- if (is.null(default_name)) rep(FALSE, length(dnames)) else
+              dnames == default_name
+  tags   <- ifelse(is_def, paste0(tags, ", default"), tags)
+  lines  <- paste0("  - ", dnames, ": ", payloads, "  [", tags, "]")
+  message(fn_label, " settings (", length(dnames), " data frames):\n",
+          paste(lines, collapse = "\n"))
+  invisible(NULL)
+}
+
 #' Internal helper: build canonical dummy variable naming for a categorical variable
 #'
 #' Single source of truth for how categorical variables are turned into named
@@ -1038,7 +1105,7 @@
     subset_expr      = subset_expr_str,
     # UDM masking activity from Step 0. udm_active = TRUE when at least
     # one variable had declared UDMs masked to NA on the analysis copy.
-    # udm_masked_vars carries the per-variable detail (codes + n_cells)
+    # udm_masked_vars carries the per-variable detail (entries + n_cells)
     # for downstream display (Case Processing Summary, etc.).
     udm_active       = length(udm_result$converted) > 0L,
     udm_masked_vars  = udm_result$converted
@@ -1990,10 +2057,14 @@
 #
 # Returns a list with:
 #   data      - the modified analysis copy
-#   converted - a named list of per-variable entries: list(codes, n_cells)
-#               where codes is the character display form ("-99") and
-#               n_cells is the number of values masked. Used by
-#               .jst_apply_pipeline to build the YELLOW notification.
+#   converted - a named list of per-variable entries. Each element is
+#               list(entries, n_cells) where entries is a data.frame with
+#               columns code_display, label, count (one row per declared
+#               na_values code, count possibly 0; plus one row for the
+#               na_range when declared), and n_cells is the aggregate
+#               OR-mask count. Consumed by jfreq's Missing section for
+#               per-code counts and by the (forthcoming) CPS per_code
+#               bottom; n_cells drives udm_active.
 # -----------------------------------------------------------------------------
 
 #' Internal helper: mask declared SPSS-form UDM cells to NA on analysis copy
@@ -2013,17 +2084,41 @@
     x_num <- suppressWarnings(as.numeric(unclass(col)))
     mask  <- rep(FALSE, length(x_num))
 
+    # Per-code entries: one row per declared na_values code (count may be
+    # 0 when a declared code is absent from the data), plus one row for
+    # the na_range when declared. code_display / label mirror
+    # .jst_missing_info()'s codes data frame so jfreq's Missing section
+    # and the future CPS per_code bottom share one per-code count source.
+    # The aggregate n_cells keeps its prior OR-mask semantics (used for
+    # masking-activity detection / udm_active).
+    entries <- data.frame(code_display = character(0), label = character(0),
+                          count = integer(0), stringsAsFactors = FALSE)
+
     if (!is.null(info$codes) && nrow(info$codes) > 0L) {
-      declared_codes <- info$codes$numeric
-      declared_codes <- declared_codes[!is.na(declared_codes)]
-      if (length(declared_codes) > 0L) {
-        mask <- mask | (!is.na(x_num) & x_num %in% declared_codes)
+      for (i in seq_len(nrow(info$codes))) {
+        cnum <- info$codes$numeric[i]
+        if (is.na(cnum)) next
+        code_mask <- (!is.na(x_num) & x_num == cnum)
+        mask      <- mask | code_mask
+        entries   <- rbind(entries, data.frame(
+          code_display = info$codes$code[i],
+          label        = info$codes$label[i],
+          count        = as.integer(sum(code_mask)),
+          stringsAsFactors = FALSE))
       }
     }
     if (!is.null(info$na_range) && length(info$na_range) == 2L) {
-      mask <- mask | (!is.na(x_num) &
-                        x_num >= info$na_range[1] &
-                        x_num <= info$na_range[2])
+      range_mask <- (!is.na(x_num) &
+                       x_num >= info$na_range[1] &
+                       x_num <= info$na_range[2])
+      mask    <- mask | range_mask
+      entries <- rbind(entries, data.frame(
+        code_display = sprintf("range %s to %s",
+                               as.character(info$na_range[1]),
+                               as.character(info$na_range[2])),
+        label        = NA_character_,
+        count        = as.integer(sum(range_mask)),
+        stringsAsFactors = FALSE))
     }
 
     n_cells <- sum(mask)
@@ -2031,16 +2126,8 @@
       # Positional indexing preserves class, na_values, na_range, and
       # value labels — only the underlying values change.
       data[[vname]][mask] <- NA
-
-      codes_display <- if (!is.null(info$codes)) info$codes$code else character(0)
-      if (!is.null(info$na_range) && length(info$na_range) == 2L) {
-        codes_display <- c(codes_display,
-                           sprintf("range [%s, %s]",
-                                   as.character(info$na_range[1]),
-                                   as.character(info$na_range[2])))
-      }
       converted[[vname]] <- list(
-        codes   = codes_display,
+        entries = entries,
         n_cells = n_cells
       )
     }
@@ -2853,21 +2940,32 @@ juse <- function(data) {
 #' @export
 jsubset <- function(data, expr) {
 
-  # -- No arguments: print status -------------------------------------------
+  # -- No arguments: print session-wide status ------------------------------
+  # Session-wide to match jsubset(NULL)'s scope. Collapse rule: 0 or 1 frame
+  # renders on a single line; 2+ frames render a header line plus one
+  # indented line per frame, with the juse() default marked.
   if (missing(data) && missing(expr)) {
-    default_name <- getOption(".jst_default_data", default = NULL)
-    if (is.null(default_name)) {
-      message("No default data frame set. Use juse() first.")
+    reg <- getOption(".jst_filter", default = list())
+    reg <- reg[!vapply(reg, is.null, logical(1))]
+    if (length(reg) == 0L) {
+      message("No jsubset settings in this session.")
       return(invisible(NULL))
     }
-    fs <- .jst_get_filter(default_name)
-    if (is.null(fs)) {
-      message("No jsubset set for ", default_name, ".")
-    } else if (fs$active) {
-      message("jsubset active for ", default_name, ": ", fs$expr_str)
-    } else {
-      message("jsubset set but inactive for ", default_name, ".")
+    default_name <- getOption(".jst_default_data", default = NULL)
+    dnames <- names(reg)
+    if (length(reg) == 1L) {
+      fs <- reg[[1L]]
+      if (isTRUE(fs$active)) {
+        message("jsubset active for ", dnames[1L], ": ", fs$expr_str)
+      } else {
+        message("jsubset set but inactive for ", dnames[1L], ": ", fs$expr_str)
+      }
+      return(invisible(NULL))
     }
+    payloads <- vapply(reg, function(fs) fs$expr_str, character(1))
+    active   <- vapply(reg, function(fs) isTRUE(fs$active), logical(1))
+    .jst_render_status_overview("jsubset", dnames, payloads, active,
+                                default_name)
     return(invisible(NULL))
   }
 
@@ -2886,21 +2984,13 @@ jsubset <- function(data, expr) {
       message("No jsubset settings to clear.")
       return(invisible(NULL))
     }
-    summary_lines <- character(length(all_filters))
-    for (i in seq_along(all_filters)) {
-      dname <- names(all_filters)[i]
-      fs    <- all_filters[[i]]
-      if (is.null(fs)) {
-        summary_lines[i] <- paste0("  - ", dname, " (no jsubset set)")
-      } else {
-        summary_lines[i] <- paste0("  - ", dname, " (had: ", fs$expr_str, ")")
-      }
-    }
+    dnames <- names(all_filters)
+    hads <- vapply(seq_along(all_filters), function(i) {
+      fs <- all_filters[[i]]
+      if (is.null(fs)) "no jsubset set" else paste0("had: ", fs$expr_str)
+    }, character(1))
     options(.jst_filter = NULL)
-    n_frames <- length(all_filters)
-    cat("Cleared jsubset settings for ", n_frames,
-        " data frame", if (n_frames == 1L) "" else "s", ":\n", sep = "")
-    cat(paste(summary_lines, collapse = "\n"), "\n", sep = "")
+    .jst_render_clear("jsubset", dnames, hads)
     return(invisible(NULL))
   }
 
@@ -2983,12 +3073,18 @@ jsubset <- function(data, expr) {
 
   # -- Set and activate the expression --------------------------------------
   expr_str <- deparse(filter_raw, width.cutoff = 500)
+  prior <- .jst_get_filter(target_name)
   .jst_set_filter(target_name, list(
     expr     = filter_raw,
     expr_str = expr_str,
     active   = TRUE
   ))
-  message("jsubset set and activated for ", target_name, ": ", expr_str)
+  if (!is.null(prior) && !identical(prior$expr_str, expr_str)) {
+    message("jsubset replaced for ", target_name, ": ", expr_str,
+            " (was: ", prior$expr_str, ")")
+  } else {
+    message("jsubset activated for ", target_name, ": ", expr_str)
+  }
   invisible(NULL)
 }
 
@@ -3159,35 +3255,46 @@ jcomplete <- function(data, ...) {
 
   default_name <- getOption(".jst_default_data", default = NULL)
 
-  # -- No arguments: print status -------------------------------------------
+  # -- No arguments: print session-wide status ------------------------------
+  # Session-wide to match jcomplete(NULL). Collapse rule: 0 or 1 frame on a
+  # single line (the single active frame appends a live complete-case count
+  # when the data frame is reachable from the caller); 2+ frames render a
+  # header plus one indented line per frame, with the juse() default marked.
   if (missing(data) && ...length() == 0) {
-    if (is.null(default_name)) {
-      message("No default data frame set. Use juse() first.")
+    reg <- getOption(".jst_complete", default = list())
+    reg <- reg[!vapply(reg, is.null, logical(1))]
+    if (length(reg) == 0L) {
+      message("No jcomplete settings in this session.")
       return(invisible(NULL))
     }
-    cs <- .jst_get_complete(default_name)
-    if (is.null(cs)) {
-      message("No jcomplete filter set for ", default_name, ".")
-    } else if (cs$active) {
+    dnames <- names(reg)
+    if (length(reg) == 1L) {
+      cs        <- reg[[1L]]
+      vars_str  <- paste(cs$vars, collapse = ", ")
+      count_str <- ""
       calling_env <- parent.frame()
-      if (exists(default_name, envir = calling_env)) {
-        df <- get(default_name, envir = calling_env)
+      if (exists(dnames[1L], envir = calling_env)) {
+        df         <- get(dnames[1L], envir = calling_env)
         valid_vars <- cs$vars[cs$vars %in% names(df)]
-        if (length(valid_vars) > 0) {
+        if (length(valid_vars) > 0L) {
           n_total    <- nrow(df)
           n_complete <- sum(stats::complete.cases(df[, valid_vars, drop = FALSE]))
-          message("jcomplete active for ", default_name, ": ",
-                  n_complete, " of ", n_total, " complete cases")
-          message("Variables: ", paste(cs$vars, collapse = ", "))
+          count_str  <- paste0(" (", n_complete, " of ", n_total,
+                               " complete cases)")
         }
-      } else {
-        message("jcomplete active for ", default_name)
-        message("Variables: ", paste(cs$vars, collapse = ", "))
       }
-    } else {
-      message("jcomplete set but inactive for ", default_name, ".")
-      message("Variables: ", paste(cs$vars, collapse = ", "))
+      if (isTRUE(cs$active)) {
+        message("jcomplete active for ", dnames[1L], ": ", vars_str, count_str)
+      } else {
+        message("jcomplete set but inactive for ", dnames[1L], ": ", vars_str)
+      }
+      return(invisible(NULL))
     }
+    payloads <- vapply(reg, function(cs) paste(cs$vars, collapse = ", "),
+                       character(1))
+    active   <- vapply(reg, function(cs) isTRUE(cs$active), logical(1))
+    .jst_render_status_overview("jcomplete", dnames, payloads, active,
+                                default_name)
     return(invisible(NULL))
   }
 
@@ -3207,23 +3314,14 @@ jcomplete <- function(data, ...) {
       message("No jcomplete settings to clear.")
       return(invisible(NULL))
     }
-    summary_lines <- character(length(all_complete))
-    for (i in seq_along(all_complete)) {
-      dname <- names(all_complete)[i]
-      cs    <- all_complete[[i]]
-      if (is.null(cs)) {
-        summary_lines[i] <- paste0("  - ", dname, " (no settings)")
-      } else {
-        summary_lines[i] <- paste0(
-          "  - ", dname, " (had: ", paste(cs$vars, collapse = ", "), ")"
-        )
-      }
-    }
+    dnames <- names(all_complete)
+    hads <- vapply(seq_along(all_complete), function(i) {
+      cs <- all_complete[[i]]
+      if (is.null(cs)) "no settings"
+      else paste0("had: ", paste(cs$vars, collapse = ", "))
+    }, character(1))
     options(.jst_complete = NULL)
-    n_frames <- length(all_complete)
-    cat("Cleared jcomplete settings for ", n_frames,
-        " data frame", if (n_frames == 1L) "" else "s", ":\n", sep = "")
-    cat(paste(summary_lines, collapse = "\n"), "\n", sep = "")
+    .jst_render_clear("jcomplete", dnames, hads)
     return(invisible(NULL))
   }
 
@@ -3261,7 +3359,8 @@ jcomplete <- function(data, ...) {
       } else {
         cs$active <- TRUE
         .jst_set_complete(default_name, cs)
-        message("jcomplete reactivated for ", default_name, ".")
+        message("jcomplete reactivated for ", default_name, ": ",
+                paste(cs$vars, collapse = ", "))
       }
       return(invisible(NULL))
     }
@@ -3316,7 +3415,8 @@ jcomplete <- function(data, ...) {
   n_complete <- sum(stats::complete.cases(data[, variable_names, drop = FALSE]))
   n_excluded <- n_total - n_complete
 
-  # Store settings
+  # Store settings (capture any prior setting first, to flag replacement)
+  prior_complete <- .jst_get_complete(.jst_data_name)
   .jst_set_complete(.jst_data_name, list(
     vars   = variable_names,
     active = TRUE
@@ -3337,6 +3437,11 @@ jcomplete <- function(data, ...) {
         " cases will be excluded from subsequent analyses.\n", sep = "")
   } else {
     cat("  Listwise filter activated \u2014 no cases will be excluded (no missing values).\n")
+  }
+  if (!is.null(prior_complete) &&
+      !identical(prior_complete$vars, variable_names)) {
+    cat("  Replaced the previous jcomplete on this data frame (was: ",
+        paste(prior_complete$vars, collapse = ", "), ").\n", sep = "")
   }
 
   invisible(NULL)
@@ -3394,71 +3499,94 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 
   default_name <- getOption(".jst_default_data", default = NULL)
 
-  # -- jdummy() — no arguments: show all registrations ----------------------
+  # -- jdummy() — no arguments: session-wide registration status ------------
+  # Session-wide to match jdummy(NULL). Collapse rule: 1 frame renders the
+  # full per-registration block (with optional coding scheme via show=);
+  # 2+ frames render a header plus one concise line per frame (registered
+  # variable names), with the juse() default marked. jdummy holds a list of
+  # registrations per frame and has no active/inactive toggle, so there is
+  # no off/on state to show here (unlike jsubset / jcomplete).
   if (missing(data) && missing(var)) {
-    if (is.null(default_name)) {
-      message("No default data frame set. Use juse() first.")
+    reg <- getOption(".jst_dummy", default = list())
+    reg <- reg[vapply(reg, function(x) !is.null(x) && length(x) > 0L,
+                      logical(1))]
+    if (length(reg) == 0L) {
+      message("No dummy registrations in this session.")
       return(invisible(NULL))
     }
-    ds <- .jst_get_dummy(default_name)
-    if (is.null(ds) || length(ds) == 0) {
-      message("No dummy variables registered for ", default_name, ".")
+    dnames <- names(reg)
+    if (length(reg) > 1L) {
+      lines <- vapply(seq_along(reg), function(i) {
+        vn  <- vapply(reg[[i]], function(r) r$var_name, character(1))
+        tag <- if (identical(dnames[i], default_name)) "  [default]" else ""
+        paste0("  - ", dnames[i], ": ", paste(vn, collapse = ", "), tag)
+      }, character(1))
+      message("jdummy registrations (", length(reg), " data frames):\n",
+              paste(lines, collapse = "\n"))
+      return(invisible(NULL))
+    }
+    # Single frame: full per-registration rendering.
+    frame_name <- dnames[1L]
+    ds <- reg[[1L]]
+    .cat_red("Dummy Variable Registrations\n")
+    if (identical(frame_name, default_name)) {
+      .jst_default_note(frame_name, extra_newline = TRUE)
     } else {
-      .cat_red("Dummy Variable Registrations\n")
-      .jst_default_note(default_name, extra_newline = TRUE)
-      for (reg in ds) {
-        cat("  Variable: ", reg$var_name,
-            " (", reg$var_type, ")\n", sep = "")
-        cat("  Reference category: ", reg$ref_code, ": ", reg$ref_label, "\n", sep = "")
-        cat("  Dummy variables: ", paste(reg$dummy_names, collapse = ", "), "\n", sep = "")
-        cat("  Cases: ", reg$n_total,
-            " (", reg$n_missing, " missing)\n", sep = "")
+      .cat_yellow(paste0("Data frame: ", frame_name, "\n"))
+      cat("\n")
+    }
+    for (regn in ds) {
+      cat("  Variable: ", regn$var_name,
+          " (", regn$var_type, ")\n", sep = "")
+      cat("  Reference category: ", regn$ref_code, ": ", regn$ref_label, "\n", sep = "")
+      cat("  Dummy variables: ", paste(regn$dummy_names, collapse = ", "), "\n", sep = "")
+      cat("  Cases: ", regn$n_total,
+          " (", regn$n_missing, " missing)\n", sep = "")
 
-        # Show coding scheme if requested
-        if (!identical(show, FALSE)) {
-          n_cats <- length(reg$codes)
-          show_all <- is.character(show) && tolower(show) == "all"
-          n_show <- if (show_all) n_cats else min(n_cats, 5)
+      # Show coding scheme if requested
+      if (!identical(show, FALSE)) {
+        n_cats <- length(regn$codes)
+        show_all <- is.character(show) && tolower(show) == "all"
+        n_show <- if (show_all) n_cats else min(n_cats, 5)
 
-          all_col_names <- character(n_show)
-          for (i in seq_len(n_show)) {
-            if (i == reg$ref_idx) {
-              all_col_names[i] <- paste0(reg$labels[i], "*")
-            } else {
-              all_col_names[i] <- reg$labels[i]
-            }
-          }
-
-          row_labels <- character(n_show)
-          for (i in 1:n_show) {
-            if (i == reg$ref_idx) {
-              row_labels[i] <- paste0(reg$codes[i], ": ", reg$labels[i], "*")
-            } else {
-              row_labels[i] <- paste0(reg$codes[i], ": ", reg$labels[i])
-            }
-          }
-
-          scheme <- matrix(0L, nrow = n_show, ncol = n_show)
-          for (i in 1:n_show) scheme[i, i] <- 1L
-
-          scheme_df <- as.data.frame(scheme, stringsAsFactors = FALSE)
-          names(scheme_df) <- all_col_names
-          rownames(scheme_df) <- row_labels
-
-          cat("\n  Dummy Coding Scheme:\n\n")
-          .jst_print_table(scheme_df,
-                           col.names = all_col_names,
-                           row.names = TRUE,
-                           indent = 4)
-          cat("\n    * Reference category\n")
-
-          if (n_cats > 5 && !show_all) {
-            cat("    (Showing first 5 of ", n_cats,
-                " categories \u2014 use show = \"all\" for complete table)\n", sep = "")
+        all_col_names <- character(n_show)
+        for (i in seq_len(n_show)) {
+          if (i == regn$ref_idx) {
+            all_col_names[i] <- paste0(regn$labels[i], "*")
+          } else {
+            all_col_names[i] <- regn$labels[i]
           }
         }
-        cat("\n")
+
+        row_labels <- character(n_show)
+        for (i in 1:n_show) {
+          if (i == regn$ref_idx) {
+            row_labels[i] <- paste0(regn$codes[i], ": ", regn$labels[i], "*")
+          } else {
+            row_labels[i] <- paste0(regn$codes[i], ": ", regn$labels[i])
+          }
+        }
+
+        scheme <- matrix(0L, nrow = n_show, ncol = n_show)
+        for (i in 1:n_show) scheme[i, i] <- 1L
+
+        scheme_df <- as.data.frame(scheme, stringsAsFactors = FALSE)
+        names(scheme_df) <- all_col_names
+        rownames(scheme_df) <- row_labels
+
+        cat("\n  Dummy Coding Scheme:\n\n")
+        .jst_print_table(scheme_df,
+                         col.names = all_col_names,
+                         row.names = TRUE,
+                         indent = 4)
+        cat("\n    * Reference category\n")
+
+        if (n_cats > 5 && !show_all) {
+          cat("    (Showing first 5 of ", n_cats,
+              " categories \u2014 use show = \"all\" for complete table)\n", sep = "")
+        }
       }
+      cat("\n")
     }
     return(invisible(NULL))
   }
@@ -3480,27 +3608,21 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 
     # Build a per-data-frame summary BEFORE clearing, so the message can
     # tell the user what was lost.
-    summary_lines <- character(length(all_dummy))
-    for (i in seq_along(all_dummy)) {
-      dname <- names(all_dummy)[i]
-      regs  <- all_dummy[[i]]
+    dnames <- names(all_dummy)
+    hads <- vapply(seq_along(all_dummy), function(i) {
+      regs <- all_dummy[[i]]
       if (is.null(regs) || length(regs) == 0) {
-        summary_lines[i] <- paste0("  - ", dname, " (no registrations)")
+        "no registrations"
       } else {
         var_names <- vapply(regs, function(r) r$var_name, character(1))
-        summary_lines[i] <- paste0(
-          "  - ", dname, " (had ", length(var_names),
-          " registered: ", paste(var_names, collapse = ", "), ")"
-        )
+        paste0("had ", length(var_names), " registered: ",
+               paste(var_names, collapse = ", "))
       }
-    }
+    }, character(1))
 
     options(.jst_dummy = NULL)
 
-    n_frames <- length(all_dummy)
-    cat("Cleared dummy registrations for ", n_frames,
-        " data frame", if (n_frames == 1L) "" else "s", ":\n", sep = "")
-    cat(paste(summary_lines, collapse = "\n"), "\n", sep = "")
+    .jst_render_clear("jdummy", dnames, hads)
     return(invisible(NULL))
   }
 
@@ -4355,21 +4477,29 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL) {
       analysis_vars   = c(variable_names, by_name),
       n_analysis      = nrow(data)
     )
-    for (v in variable_names) {
-      .cat_red(paste0("Descriptive Statistics: ", v, " by ", by_name,
-                      " (", length(group_levels), " levels)\n"))
-      if (.jst_default_used) .jst_default_note(.jst_data_name)
-      .jst_print_msgs(pipeline$msgs)
+    # Shared header for the whole by-group output: printed once (parallels
+    # the no-by path), not repeated per variable. The grouping variable's
+    # type/label block belongs here; each analysis variable's own block
+    # stays inside the per-variable loop below. (The .jst_print_case_processing
+    # call remains per-variable pending the CPS rendering work.)
+    .cat_red(paste0("Descriptive Statistics by ", by_name,
+                    " (", length(group_levels), " levels)\n"))
+    if (.jst_default_used) .jst_default_note(.jst_data_name)
+    .jst_print_msgs(pipeline$msgs)
+    if (.jst_resolve_toggle("var.labels", labels)) {
+      cat(by_name, "\n", sep = "")
+      cat("  Type: ", .format_var_type(original_by_class), "\n", sep = "")
+      cat("  Variable label: ", original_by_label, "\n", sep = "")
+    }
+    cat("\n")
 
+    for (v in variable_names) {
       .jst_print_case_processing(sample_info, analysis_type = "per_variable")
 
       if (.jst_resolve_toggle("var.labels", labels)) {
         cat(v, "\n", sep = "")
         cat("  Type: ", .format_var_type(original_dv_info[[v]]$class), "\n", sep = "")
         cat("  Variable label: ", original_dv_info[[v]]$label, "\n", sep = "")
-        cat(by_name, "\n", sep = "")
-        cat("  Type: ", .format_var_type(original_by_class), "\n", sep = "")
-        cat("  Variable label: ", original_by_label, "\n", sep = "")
       }
 
       # Warn if DV has categorical-like structure (small-range labelled or
@@ -4752,12 +4882,16 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL) {
     )
 
     # Missing breakdown: UDM rows (if any) + system NA row (if any).
-    # UDM rows are driven by .jst_missing_info() so the row format stays
-    # in sync with the load-time narrative produced by
+    # Row structure and labels are driven by .jst_missing_info() so the
+    # format stays in sync with the load-time narrative produced by
     # .jst_format_udm_narrative (shared-rendering-conventions principle,
-    # Decision 7). The helper returns codes-and-labels uniformly for
-    # both SPSS-form (na_values, na_range) and Stata-form (tagged_na);
-    # per-code counts are derived from the unmasked raw column.
+    # Decision 7). Per-code COUNTS for SPSS-form variables come from the
+    # pipeline's declared-UDM masking pass (.jst_apply_declared_udms_as_na,
+    # via pipeline$pipeline_counts$udm_masked_vars) rather than being
+    # re-counted here, so jfreq and the forthcoming CPS per_code bottom
+    # share one count source. Stata-form tagged_na variables are not
+    # masked (is.na() catches them natively), so that branch still counts
+    # via haven::na_tag() on the raw column.
     raw_col   <- arg1$data[[variable_name]]
     mi        <- .jst_missing_info(raw_col)
     udm_rows  <- data.frame(Value = character(0), Freq = integer(0),
@@ -4784,12 +4918,20 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL) {
                                         stringsAsFactors = FALSE))
         }
       } else {
-        # SPSS-form: per-code rows plus optional range row.
-        raw_num <- suppressWarnings(as.numeric(unclass(raw_col)))
-        if (nrow(mi$codes) > 0L) {
+        # SPSS-form: per-code rows plus optional range row. Counts come
+        # from the masking pass (udm_masked_vars$entries); a variable
+        # whose codes matched zero cells is absent from the bundle and its
+        # rows must still print (count 0) — mi drives that, lookup -> 0.
+        ent <- pipeline$pipeline_counts$udm_masked_vars[[variable_name]]$entries
+        code_count <- function(code_disp) {
+          if (is.null(ent)) return(0L)
+          hit <- ent$count[ent$code_display == code_disp]
+          if (length(hit) == 0L) 0L else as.integer(hit[1])
+        }
+        if (!is.null(mi$codes) && nrow(mi$codes) > 0L) {
           for (i in seq_len(nrow(mi$codes))) {
             r <- mi$codes[i, ]
-            row_count <- as.integer(sum(!is.na(raw_num) & raw_num == r$numeric))
+            row_count <- code_count(r$code)
             row_label <- if (!is.na(r$label) && nzchar(r$label)) {
               sprintf('%s ["%s"]', r$code, r$label)
             } else {
@@ -4803,8 +4945,12 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL) {
         }
         if (!is.null(mi$na_range) && length(mi$na_range) == 2L) {
           rg          <- mi$na_range
-          range_count <- as.integer(sum(!is.na(raw_num) &
-                                        raw_num >= rg[1] & raw_num <= rg[2]))
+          # Range count is the entries row whose code_display is not one
+          # of the discrete declared codes (at most one such row).
+          range_count <- if (is.null(ent)) 0L else {
+            rr <- ent$count[!ent$code_display %in% mi$codes$code]
+            if (length(rr) == 0L) 0L else as.integer(sum(rr))
+          }
           row_label   <- sprintf("range %s to %s", rg[1], rg[2])
           udm_total   <- udm_total + range_count
           udm_rows    <- rbind(udm_rows,
@@ -12462,31 +12608,29 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     var_strings[i] <- sprintf("%s: %s", entry$var, body)
   }
 
-  list_str <- paste(var_strings, collapse = "; ")
+  list_lines <- paste0("  ", var_strings)
   if (n_vars > max_show) {
-    list_str <- paste0(list_str, "; ...and ", n_vars - max_show, " more")
+    list_lines <- c(list_lines, paste0("  ...and ", n_vars - max_show, " more"))
   }
+  list_str <- paste(list_lines, collapse = "\n")
 
   if (preserve.udm) {
-    sprintf(
-      paste0(
-        "%d variables have user-defined missing-value declarations preserved ",
-        "from the loaded data (%s). Declarations are retained for round-trip ",
-        "fidelity and these codes are treated as NA in analysis functions. ",
-        "To convert them to plain NA on import instead, use jload(file, ",
-        "preserve.udm = FALSE)."
-      ),
-      n_vars, list_str
+    paste0(
+      sprintf("%d variables have user-defined missing values:\n", n_vars),
+      list_str,
+      "\nThese codes are excluded as missing in jstats analyses. ",
+      "For better base R compatibility, convert them:\n",
+      "  jconvert(data, to = \"stata\")  \u2014 retains missing-value codes, ",
+      "base R compatible (recommended)\n",
+      "  jconvert(data, to = \"baseR\")  \u2014 converts to plain NA and ",
+      "removes missing-value codes"
     )
   } else {
-    sprintf(
-      paste0(
-        "%d variables had user-defined missing-value declarations; these have ",
-        "been converted to plain NA per preserve.udm = FALSE (%s). To preserve ",
-        "them as their original declarations instead, use jload(file, ",
-        "preserve.udm = TRUE)."
-      ),
-      n_vars, list_str
+    paste0(
+      sprintf("%d variables had user-defined missing values, ", n_vars),
+      "converted to plain NA per preserve.udm = FALSE:\n",
+      list_str,
+      "\nTo keep the declarations instead, reload with preserve.udm = TRUE."
     )
   }
 }
