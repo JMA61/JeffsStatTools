@@ -7,7 +7,8 @@
 joptions(
   missing.convention = NULL,
   udm.convention.codes = NULL,
-  data.dir = NULL
+  data.dir = NULL,
+  echo = TRUE
 )
 }
 \arguments{
@@ -17,6 +18,10 @@ joptions(
 \item{udm.convention.codes}{Numeric vector, length 1 to 4. See Slots.}
 
 \item{data.dir}{Character string (length 1), or \code{NULL}. See Slots.}
+
+\item{echo}{Logical; default TRUE. When FALSE, joptions() applies the
+change silently, suppressing both the status panel and the convention
+nudge. A bare joptions() status query always prints regardless of echo.}
 }
 \value{
 Invisibly returns \code{NULL}. Called for the side effect of

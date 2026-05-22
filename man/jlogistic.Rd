@@ -15,6 +15,7 @@ jlogistic(
   classification = FALSE,
   diagnostics = NULL,
   full = FALSE,
+  case.processing.detail = NULL,
   ...
 )
 }
@@ -48,6 +49,11 @@ supported option. If NULL (default), defers to \code{joutput()}.}
 
 \item{full}{Logical. If TRUE, turns on ci, classification, and
 diagnostics. Does not override explicit FALSE values.}
+
+\item{case.processing.detail}{Per-call override of the Case
+Processing Summary detail tier: one of \code{"none"},
+\code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+uses the active \code{joutput()} level default.}
 
 \item{...}{Reserved for argument-name checking. Passing \code{which},
 \code{plots}, or \code{show} will produce a helpful error suggesting

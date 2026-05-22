@@ -4,7 +4,7 @@
 \alias{jalpha}
 \title{Cronbach's Alpha Reliability Analysis}
 \usage{
-jalpha(data, ..., subset = NULL, labels = NULL)
+jalpha(data, ..., subset = NULL, labels = NULL, case.processing.detail = NULL)
 }
 \arguments{
 \item{data}{A data frame.}
@@ -17,6 +17,11 @@ jcomplete and jsubset. Does not affect other function calls.}
 
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
+
+\item{case.processing.detail}{Per-call override of the Case
+Processing Summary detail tier: one of \code{"none"},
+\code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+uses the active \code{joutput()} level default.}
 }
 \value{
 Invisibly returns a list of class \code{jst_alpha} containing:

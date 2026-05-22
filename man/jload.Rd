@@ -12,7 +12,8 @@ jload(
   check.missing = TRUE,
   sheet = NULL,
   preserve.udm = TRUE,
-  udm.notice = NULL
+  udm.notice = NULL,
+  quiet = FALSE
 )
 }
 \arguments{
@@ -57,6 +58,11 @@ semantics when set to \code{TRUE}.}
 \code{TRUE} prints the notification on every load; \code{FALSE}
 suppresses it; \code{NULL} at the global level shows once per session.
 See \code{?joutput} for the full toggle behaviour.}
+
+\item{quiet}{Logical; default FALSE. When TRUE, suppresses jload()'s
+informational messages (file found, load summary, default-data note,
+and the UDM narrative, overriding udm.notice). Errors, warnings, the
+multi-sheet advisory, and the overwrite prompt are still shown.}
 }
 \value{
 Invisibly returns the loaded data frame. The primary effect is
@@ -146,11 +152,15 @@ jload("mydata.xlsx", sheet = 2)
 jload("mydata.csv")
 jload("mydata.rds")
 
-#' # Extension omitted — jload searches for a matching file automatically
+# Extension omitted — jload searches for a matching file automatically
 jload("mydata")
 
 # Full file path
 jload("C:/Projects/Data/mydata.dta")
+
+# Quiet load (e.g. in a .Rprofile or startup script): suppresses the
+# informational messages while still loading. Errors and warnings still show.
+jload("mydata.rds", name = "MyData", quiet = TRUE)
 }
 
 }

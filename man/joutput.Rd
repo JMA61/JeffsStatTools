@@ -13,9 +13,11 @@ joutput(
   missing = NULL,
   diagnostics = NULL,
   case.processing = NULL,
+  case.processing.detail = NULL,
   var.labels = NULL,
   ref.categories = NULL,
-  udm.notice = NULL
+  udm.notice = NULL,
+  echo = TRUE
 )
 }
 \arguments{
@@ -64,6 +66,13 @@ excluded at least one case (in listwise functions like \code{jlm},
 \code{FALSE}; the full tier sets it to \code{TRUE}; the standard
 tier sets it to \code{NULL}.}
 
+\item{case.processing.detail}{Detail tier for the Case Processing
+Summary's missing-data breakdown: \code{"none"} (no bottom
+table), \code{"totals"} (one summed missing row per variable),
+or \code{"per_code"} (per UDM code plus system-missing). The
+minimal tier defaults to \code{"none"}, standard to
+\code{"totals"}, full to \code{"per_code"}.}
+
 \item{var.labels}{Logical or NULL. Override the level's default for
 the variable labels block.}
 
@@ -77,6 +86,10 @@ load that involves UDM-bearing variables; \code{FALSE} suppresses
 it entirely; \code{NULL} ("auto") prints it only the first time
 in a session, then suppresses it. Standard level uses \code{NULL}
 (auto), minimal uses \code{FALSE}, full uses \code{TRUE}.}
+
+\item{echo}{Logical; default TRUE. When FALSE, joutput() applies the
+level/toggle change silently (the status panel is not printed). A bare
+joutput() status query always prints regardless of echo.}
 }
 \value{
 Invisibly returns NULL. Called for its side effect of setting

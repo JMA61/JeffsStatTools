@@ -4,7 +4,7 @@
 \alias{jfreq}
 \title{SPSS-like frequency tables for categorical variables}
 \usage{
-jfreq(data, ..., subset = NULL, labels = NULL)
+jfreq(data, ..., subset = NULL, labels = NULL, case.processing.detail = NULL)
 }
 \arguments{
 \item{data}{A data frame, or a vector.}
@@ -20,6 +20,11 @@ jcomplete and jsubset. Does not affect other function calls.}
 label (or "None") beneath the title. If FALSE, suppresses them. If
 NULL (default), defers to \code{joutput()}'s \code{var.labels}
 setting.}
+
+\item{case.processing.detail}{Accepted for API symmetry. jfreq's
+Case Processing Summary is top-table only (no missing-data
+breakdown), so this argument has no effect; per-variable code
+detail already appears in each variable's frequency table.}
 }
 \value{
 Invisibly returns a list of class \code{jst_freq} containing:

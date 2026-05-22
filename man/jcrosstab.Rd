@@ -12,7 +12,8 @@ jcrosstab(
   row.pct = TRUE,
   col.pct = FALSE,
   subset = NULL,
-  labels = NULL
+  labels = NULL,
+  case.processing.detail = NULL
 )
 }
 \arguments{
@@ -36,6 +37,11 @@ jcomplete and jsubset. Does not affect other function calls.}
 
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
+
+\item{case.processing.detail}{Per-call override of the Case
+Processing Summary detail tier: one of \code{"none"},
+\code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+uses the active \code{joutput()} level default.}
 }
 \value{
 Invisibly returns a list of class \code{jst_crosstab} containing:

@@ -14,6 +14,7 @@ jt(
   ci = NULL,
   subset = NULL,
   labels = NULL,
+  case.processing.detail = NULL,
   full = FALSE
 )
 }
@@ -45,6 +46,11 @@ jcomplete and jsubset. Does not affect other function calls.}
 
 \item{labels}{Logical. If TRUE (default), prints variable labels
 when available.}
+
+\item{case.processing.detail}{Per-call override of the Case
+Processing Summary detail tier: one of \code{"none"},
+\code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+uses the active \code{joutput()} level default.}
 
 \item{full}{Logical. If TRUE, turns on effect.size, levene, and ci
 all at once. Does not override explicit FALSE values.}

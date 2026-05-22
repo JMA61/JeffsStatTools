@@ -2,72 +2,42 @@
 % Please edit documentation in R/7036Tools.R
 \name{.jst_print_case_processing}
 \alias{.jst_print_case_processing}
-\title{Internal helper: print the Case Processing Summary (CPS) table}
+\title{Internal helper: print the Case Processing Summary (CPS)}
 \usage{
 .jst_print_case_processing(
   sample_info,
   analysis_type = "listwise",
+  detail = NULL,
   notification_template = NULL,
   data = NULL,
   analysis_vars = NULL
 )
 }
 \arguments{
-\item{sample_info}{List built by \code{.jst_build_sample_info}.}
+\item{sample_info}{List from \code{.jst_build_sample_info} (carries the
+pipeline counts plus pre_pipeline_data / surviving_ids / analysis_vars).}
 
-\item{analysis_type}{Character, one of \code{listwise},
-\code{per_variable}, or \code{pairwise}.}
+\item{analysis_type}{Layout key: \code{"listwise"}, \code{"pairwise"},
+\code{"per_var_desc"}, or \code{"per_var_freq"}.}
 
-\item{notification_template}{Character template for the
-listwise-discrepancy notification, used only when
-analysis_type = \code{per_variable}. May contain a single
-percent-d placeholder that will be replaced with the count of
-additional cases listwise would exclude. Set NULL to disable the
-notification for this caller (e.g. when there is only one analysis
-variable).}
+\item{detail}{Per-call case.processing.detail override (NULL, "none",
+"totals", "per_code"). NULL defers to the joutput tier default.}
 
-\item{data}{Data frame used by per-variable callers to compute the
-listwise-discrepancy count. Required when
-analysis_type = \code{per_variable} and
-\code{notification_template} is non-NULL.}
-
-\item{analysis_vars}{Character vector of analysis variable names
-used by per-variable callers to compute the listwise-discrepancy
-count. Required when analysis_type = \code{per_variable} and
-\code{notification_template} is non-NULL.}
+\item{notification_template, data, analysis_vars}{Listwise-discrepancy
+notification inputs (per-variable layouts only); see the closure below.}
 }
 \value{
-\code{invisible(NULL)}. Called for its side effect of
-printing the table (and optionally the missing-by-var detail line
-and notification).
+\code{invisible(NULL)}.
 }
 \description{
-Centralises all CPS display logic. Callers specify an
-\code{analysis_type} that determines:
-\itemize{
-\item Whether the listwise row appears (only for \code{listwise}).
-\item The label of the final summary row (\code{Analysis N} for
-\code{listwise}; \code{Available N} for \code{per_variable}
-and \code{pairwise}).
-\item Whether the missing-by-variable diagnostic is eligible to
-print (only for \code{listwise}, when the missing toggle is on
-and listwise excluded at least one case).
-\item Whether the listwise-discrepancy notification is eligible
-(only for \code{per_variable}, only when 2+ analysis variables
-and the additional listwise drop is non-zero).
-}
+Resolves a render spec from the .jst_cps_*_rules tables (via
+\code{.jst_resolve_cps_render}) and draws the top table (pipeline chain)
+and, where the spec calls for it, the bottom table (per-variable
+missing-data breakdown, totals or per_code tier). Contains no render-rule
+logic of its own; all show/hide decisions arrive pre-resolved.
 }
 \details{
-Auto-suppress rules (when \code{case.processing} toggle is NULL,
-i.e. the standard tier default):
-\itemize{
-\item \code{listwise}: print when pipeline is active OR listwise
-excluded at least one case.
-\item \code{per_variable}: print when pipeline is active.
-\item \code{pairwise}: print when pipeline is active.
-}
-
-Explicit toggle overrides (TRUE / FALSE in joutput) bypass the
-auto-suppress logic in the same way they did before.
+Display design = JStats_CPS_Rendering_Reference.txt (four layouts, Form B
+bottom). Missing-value semantics = JStats_Missing_Values_Reference.txt.
 }
 \keyword{internal}

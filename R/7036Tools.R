@@ -1010,6 +1010,15 @@
   msgs <- character(0)
   n_original <- nrow(data)
 
+  # Snapshot the pre-masking data so the CPS bottom can compute source/pool
+  # per-code counts from intact UDM codes (the masking pass below converts
+  # SPSS-form UDM cells to NA destructively). Survival is tracked via a
+  # temporary integer id column (rownames are unreliable on tibbles, which
+  # the course datasets are); the column rides through the row-subsetting
+  # filters and is read off — then removed — at the end. Operates on the
+  # local analysis copy only; the user's frame is untouched.
+  pre_pipeline_data <- data
+
   # Pipeline count tracking
   n_after_complete <- NULL
   n_after_filter   <- NULL
@@ -1017,6 +1026,7 @@
   complete_active  <- FALSE
   filter_active    <- FALSE
   filter_expr_str  <- NULL
+  complete_vars    <- NULL
 
   # -- Step 0: declared UDM masking on the analysis copy --------------------
   # Mask values declared as user-defined missing values (UDMs) to NA on a
@@ -1035,6 +1045,11 @@
   udm_result <- .jst_apply_declared_udms_as_na(data)
   data       <- udm_result$data
 
+  # Temporary survival-tracking id (removed before this function returns).
+  # Added after masking (which preserves row order) and before filtering, so
+  # the surviving values are the original 1..n_original row positions.
+  data$.jst_row_id <- seq_len(n_original)
+
   # -- Step 1: jcomplete -----------------------------------------------------
   # Applied whenever a jcomplete is set on the current dataset (by name),
   # regardless of whether that dataset was supplied via juse() default or
@@ -1045,6 +1060,7 @@
     if (cs$active) {
       complete_active <- TRUE
       valid_vars <- cs$vars[cs$vars %in% names(data)]
+      complete_vars <- valid_vars
       if (length(valid_vars) > 0) {
         complete_mask    <- stats::complete.cases(data[, valid_vars, drop = FALSE])
         data             <- data[complete_mask, , drop = FALSE]
@@ -1094,6 +1110,11 @@
     n_after_subset <- nrow(data)
   }
 
+  # Recover surviving original row positions, then strip the temp id column
+  # so the returned analysis data is clean.
+  surviving_ids    <- data$.jst_row_id
+  data$.jst_row_id <- NULL
+
   pipeline_counts <- list(
     n_original       = n_original,
     n_after_complete = n_after_complete,
@@ -1108,7 +1129,14 @@
     # udm_masked_vars carries the per-variable detail (entries + n_cells)
     # for downstream display (Case Processing Summary, etc.).
     udm_active       = length(udm_result$converted) > 0L,
-    udm_masked_vars  = udm_result$converted
+    udm_masked_vars  = udm_result$converted,
+    # CPS rendering inputs (Steps 3-6). pre_pipeline_data holds the original
+    # rows with UDM codes intact; surviving_ids are the original row numbers
+    # that survived the pipeline (the analysis pool). The renderer derives
+    # pool_data = pre_pipeline_data[surviving_ids, ] for source/pool counts.
+    complete_vars     = complete_vars,
+    pre_pipeline_data = pre_pipeline_data,
+    surviving_ids     = surviving_ids
   )
 
   list(data = data, msgs = msgs, pipeline_counts = pipeline_counts)
@@ -1162,15 +1190,20 @@
     n_after_complete   = pipeline_counts$n_after_complete,
     n_after_filter     = pipeline_counts$n_after_filter,
     n_after_subset     = pipeline_counts$n_after_subset,
+    n_after_pipeline   = n_after_pipeline,
     n_analysis         = n_analysis,
     n_excluded_missing = n_excluded_missing,
     missing_by_var     = missing_by_var,
+    analysis_vars      = analysis_vars,
     complete_active    = pipeline_counts$complete_active,
+    complete_vars      = pipeline_counts$complete_vars,
     filter_active      = pipeline_counts$filter_active,
     filter_expr        = pipeline_counts$filter_expr,
     subset_expr        = pipeline_counts$subset_expr,
     udm_active         = pipeline_counts$udm_active,
-    udm_masked_vars    = pipeline_counts$udm_masked_vars
+    udm_masked_vars    = pipeline_counts$udm_masked_vars,
+    pre_pipeline_data  = pipeline_counts$pre_pipeline_data,
+    surviving_ids      = pipeline_counts$surviving_ids
   )
 }
 
@@ -1191,15 +1224,18 @@
 .jst_output_defaults <- list(
   minimal  = list(effect.size = FALSE, ci = FALSE, levene = FALSE,
                   posthoc = FALSE, missing = FALSE, diagnostics = FALSE,
-                  case.processing = FALSE, var.labels = FALSE, ref.categories = FALSE,
+                  case.processing = FALSE, case.processing.detail = "none",
+                  var.labels = FALSE, ref.categories = FALSE,
                   udm.notice = FALSE),
   standard = list(effect.size = TRUE,  ci = TRUE,  levene = FALSE,
                   posthoc = FALSE, missing = FALSE, diagnostics = FALSE,
-                  case.processing = NULL,  var.labels = TRUE,  ref.categories = TRUE,
+                  case.processing = NULL,  case.processing.detail = "totals",
+                  var.labels = TRUE,  ref.categories = TRUE,
                   udm.notice = NULL),
   full     = list(effect.size = TRUE,  ci = TRUE,  levene = TRUE,
                   posthoc = TRUE,  missing = TRUE,  diagnostics = TRUE,
-                  case.processing = TRUE,  var.labels = TRUE,  ref.categories = TRUE,
+                  case.processing = TRUE,  case.processing.detail = "per_code",
+                  var.labels = TRUE,  ref.categories = TRUE,
                   udm.notice = TRUE)
 )
 
@@ -1325,279 +1361,490 @@
   return("spss")
 }
 
-#' Internal helper: print the Case Processing Summary (CPS) table
+#' CPS rendering rule tables (data, not logic)
 #'
-#' Centralises all CPS display logic. Callers specify an
-#' \code{analysis_type} that determines:
-#' \itemize{
-#'   \item Whether the listwise row appears (only for \code{listwise}).
-#'   \item The label of the final summary row (\code{Analysis N} for
-#'     \code{listwise}; \code{Available N} for \code{per_variable}
-#'     and \code{pairwise}).
-#'   \item Whether the missing-by-variable diagnostic is eligible to
-#'     print (only for \code{listwise}, when the missing toggle is on
-#'     and listwise excluded at least one case).
-#'   \item Whether the listwise-discrepancy notification is eligible
-#'     (only for \code{per_variable}, only when 2+ analysis variables
-#'     and the additional listwise drop is non-zero).
-#' }
+#' Canonical source = JStats_CPS_Rendering_Reference.txt Tables 1-3. Per the
+#' locked lockstep commitment, any change to a rule here updates BOTH that
+#' reference file and this data frame in the same session. "any" is a
+#' wildcard; matching is first-match top-to-bottom, so reference rows whose
+#' value is "-" (not evaluated) are encoded as "any" with ordering preserved.
 #'
-#' Auto-suppress rules (when \code{case.processing} toggle is NULL,
-#' i.e. the standard tier default):
-#' \itemize{
-#'   \item \code{listwise}: print when pipeline is active OR listwise
-#'     excluded at least one case.
-#'   \item \code{per_variable}: print when pipeline is active.
-#'   \item \code{pairwise}: print when pipeline is active.
-#' }
+#' @keywords internal
+.jst_cps_visibility_rules <- data.frame(
+  level    = c("minimal", "standard", "standard", "standard", "full"),
+  pipeline = c("any",     "no",       "yes",      "any",      "any"),
+  missing  = c("any",     "no",       "any",      "yes",      "any"),
+  rendered = c(FALSE,     FALSE,      TRUE,       TRUE,       TRUE),
+  stringsAsFactors = FALSE
+)
+
+#' @keywords internal
+.jst_cps_layout_rules <- data.frame(
+  layout         = c("listwise", "pairwise", "per_var_desc", "per_var_freq"),
+  top_default    = c("on",       "on",       "on",           "on"),
+  bottom_default = c("on",       "on",       "on",           "off"),
+  endpoint_label = c("Analysis N", "Remaining N", "Remaining N", "Remaining N"),
+  auto_listwise  = c("shown",    "hidden",   "hidden",       "hidden"),
+  stringsAsFactors = FALSE
+)
+
+#' @keywords internal
+.jst_cps_bottom_rules <- data.frame(
+  layout    = c(rep("listwise", 7), rep("pairwise", 7),
+                rep("per_var_desc", 5), "per_var_freq"),
+  has_udms  = c("no","no","no","no","yes","yes","yes",
+                "no","no","no","no","yes","yes","yes",
+                "no","no","yes","yes","yes",
+                "any"),
+  has_sysna = c("no","yes","yes","yes","any","any","any",
+                "no","yes","yes","yes","any","any","any",
+                "no","yes","any","any","any",
+                "any"),
+  tier      = c("any","none","totals","per_code","none","totals","per_code",
+                "any","none","totals","per_code","none","totals","per_code",
+                "any","any","none","totals","per_code",
+                "any"),
+  bottom        = c(FALSE,FALSE,TRUE,TRUE,FALSE,TRUE,TRUE,
+                    FALSE,FALSE,TRUE,TRUE,FALSE,TRUE,TRUE,
+                    FALSE,FALSE,FALSE,FALSE,TRUE,
+                    FALSE),
+  resolved_tier = c(NA,NA,"totals","totals",NA,"totals","per_code",
+                    NA,NA,"totals","totals",NA,"totals","per_code",
+                    NA,NA,NA,NA,"per_code",
+                    NA),
+  stringsAsFactors = FALSE
+)
+
+#' Internal helper: first-match lookup against a CPS rule frame
 #'
-#' Explicit toggle overrides (TRUE / FALSE in joutput) bypass the
-#' auto-suppress logic in the same way they did before.
+#' @param rules A .jst_cps_*_rules data frame.
+#' @param conds Named list of column -> observed value. A rule cell of
+#'   \code{"any"} matches anything; otherwise an exact match is required.
+#' @return The first matching row index, or \code{NA_integer_}.
+#' @keywords internal
+.jst_cps_match <- function(rules, conds) {
+  for (i in seq_len(nrow(rules))) {
+    ok <- TRUE
+    for (col in names(conds)) {
+      rv <- rules[[col]][i]
+      if (!identical(rv, "any") && !identical(rv, conds[[col]])) {
+        ok <- FALSE; break
+      }
+    }
+    if (ok) return(i)
+  }
+  NA_integer_
+}
+
+#' Internal helper: resolve the CPS render spec from the rule tables
 #'
-#' @param sample_info List built by \code{.jst_build_sample_info}.
-#' @param analysis_type Character, one of \code{listwise},
-#'   \code{per_variable}, or \code{pairwise}.
-#' @param notification_template Character template for the
-#'   listwise-discrepancy notification, used only when
-#'   analysis_type = \code{per_variable}. May contain a single
-#'   percent-d placeholder that will be replaced with the count of
-#'   additional cases listwise would exclude. Set NULL to disable the
-#'   notification for this caller (e.g. when there is only one analysis
-#'   variable).
-#' @param data Data frame used by per-variable callers to compute the
-#'   listwise-discrepancy count. Required when
-#'   analysis_type = \code{per_variable} and
-#'   \code{notification_template} is non-NULL.
-#' @param analysis_vars Character vector of analysis variable names
-#'   used by per-variable callers to compute the listwise-discrepancy
-#'   count. Required when analysis_type = \code{per_variable} and
-#'   \code{notification_template} is non-NULL.
+#' Reads the three .jst_cps_*_rules frames and applies layer precedence
+#' (Visibility first; if not rendered, returns early). Contains no rules of
+#' its own. Errors loudly on a coordinate that matches no row.
 #'
-#' @return \code{invisible(NULL)}. Called for its side effect of
-#'   printing the table (and optionally the missing-by-var detail line
-#'   and notification).
+#' @param layout One of \code{"listwise"}, \code{"pairwise"},
+#'   \code{"per_var_desc"}, \code{"per_var_freq"}.
+#' @param pipeline_active Logical. Any of jcomplete/jsubset/subset fired.
+#' @param has_udms Logical. At least one analysis variable has a declared UDM.
+#' @param has_sysna Logical. At least one analysis variable has plain-NA
+#'   missingness (in source or pool).
+#' @param output_level One of \code{"minimal"}, \code{"standard"},
+#'   \code{"full"}.
+#' @param detail_tier One of \code{"none"}, \code{"totals"}, \code{"per_code"}.
+#' @param cps_toggle Resolved case.processing toggle: \code{TRUE} (always),
+#'   \code{FALSE} (never), or \code{NULL} (auto -> use output_level).
+#' @return A list: render, render_top, render_bottom, endpoint_label,
+#'   show_auto_listwise, resolved_tier, hide_second_col_pair.
+#' @keywords internal
+.jst_resolve_cps_render <- function(layout, pipeline_active,
+                                    has_udms, has_sysna,
+                                    output_level, detail_tier,
+                                    cps_toggle = NULL) {
+
+  eff_level <- if (isTRUE(cps_toggle)) "full"
+               else if (identical(cps_toggle, FALSE)) "minimal"
+               else output_level
+  any_missing <- has_udms || has_sysna
+
+  vi <- .jst_cps_match(
+    .jst_cps_visibility_rules,
+    list(level    = eff_level,
+         pipeline = if (pipeline_active) "yes" else "no",
+         missing  = if (any_missing) "yes" else "no"))
+  if (is.na(vi)) {
+    stop(".jst_resolve_cps_render(): no visibility rule for level='", eff_level,
+         "', pipeline=", pipeline_active, ", missing=", any_missing,
+         call. = FALSE)
+  }
+  if (!.jst_cps_visibility_rules$rendered[vi]) return(list(render = FALSE))
+
+  li <- match(layout, .jst_cps_layout_rules$layout)
+  if (is.na(li)) {
+    stop(".jst_resolve_cps_render(): unknown layout '", layout, "'",
+         call. = FALSE)
+  }
+  base <- .jst_cps_layout_rules[li, ]
+
+  bi <- .jst_cps_match(
+    .jst_cps_bottom_rules,
+    list(layout    = layout,
+         has_udms  = if (has_udms) "yes" else "no",
+         has_sysna = if (has_sysna) "yes" else "no",
+         tier      = detail_tier))
+  if (is.na(bi)) {
+    stop(".jst_resolve_cps_render(): no bottom rule for layout='", layout,
+         "', has_udms=", has_udms, ", has_sysna=", has_sysna,
+         ", tier='", detail_tier, "'", call. = FALSE)
+  }
+  ref <- .jst_cps_bottom_rules[bi, ]
+
+  # Base footnote (e): the refinement layer can suppress an "on" base default
+  # but cannot promote an "off" one (so per_var_freq never grows a bottom).
+  render_bottom <- (base$bottom_default == "on") && isTRUE(ref$bottom)
+
+  list(
+    render               = TRUE,
+    render_top           = (base$top_default == "on"),
+    render_bottom        = render_bottom,
+    endpoint_label       = base$endpoint_label,
+    show_auto_listwise   = (base$auto_listwise == "shown"),
+    resolved_tier        = if (render_bottom) ref$resolved_tier else NA_character_,
+    hide_second_col_pair = !pipeline_active
+  )
+}
+
+#' Internal helper: per-variable source/pool missing rows for the CPS bottom
 #'
+#' Computes, for one analysis variable, the per-code (and System/NA) counts
+#' in the source (full original) and pool (surviving rows) columns. Counts
+#' come from the pre-masking columns so SPSS-form UDM codes are still live
+#' values; pool counts are post-filter-correct (this is also why the Session
+#' 29 pre/post UDM count quirk does not affect the CPS bottom).
+#'
+#' @param pre_col  Pre-masking original column (full N).
+#' @param pool_col Pre-masking column restricted to surviving rows.
+#' @param mi       \code{.jst_missing_info()} for the column, or NULL.
+#' @return data.frame(code_label, src, pool); empty if no missingness.
+#' @keywords internal
+.jst_cps_var_rows <- function(pre_col, pool_col, mi) {
+  rows <- data.frame(code_label = character(0), src = integer(0),
+                     pool = integer(0), stringsAsFactors = FALSE)
+
+  if (!is.null(mi)) {
+    if (identical(mi$representation, "stata")) {
+      tag_pre  <- haven::na_tag(pre_col)
+      tag_pool <- haven::na_tag(pool_col)
+      for (i in seq_len(nrow(mi$codes))) {
+        r   <- mi$codes[i, ]
+        s   <- sum(!is.na(tag_pre)  & tag_pre  == r$tag)
+        p   <- sum(!is.na(tag_pool) & tag_pool == r$tag)
+        lab <- if (!is.na(r$label) && nzchar(r$label))
+                 sprintf('%s ["%s"]', r$code, r$label)
+               else sprintf('%s (no label)', r$code)
+        rows <- rbind(rows, data.frame(code_label = lab, src = s, pool = p,
+                                       stringsAsFactors = FALSE))
+      }
+    } else {
+      # SPSS-form: per declared code, then na_range. UDM codes are live
+      # values in the pre-masking columns, so numeric comparison works.
+      x_pre  <- suppressWarnings(as.numeric(unclass(pre_col)))
+      x_pool <- suppressWarnings(as.numeric(unclass(pool_col)))
+      if (!is.null(mi$codes) && nrow(mi$codes) > 0L) {
+        for (i in seq_len(nrow(mi$codes))) {
+          r   <- mi$codes[i, ]
+          s   <- sum(!is.na(x_pre)  & x_pre  == r$numeric)
+          p   <- sum(!is.na(x_pool) & x_pool == r$numeric)
+          lab <- if (!is.na(r$label) && nzchar(r$label))
+                   sprintf('%s ["%s"]', r$code, r$label)
+                 else sprintf('%s (no label)', r$code)
+          rows <- rbind(rows, data.frame(code_label = lab, src = s, pool = p,
+                                         stringsAsFactors = FALSE))
+        }
+      }
+      if (!is.null(mi$na_range) && length(mi$na_range) == 2L) {
+        lo <- mi$na_range[1]; hi <- mi$na_range[2]
+        s  <- sum(!is.na(x_pre)  & x_pre  >= lo & x_pre  <= hi)
+        p  <- sum(!is.na(x_pool) & x_pool >= lo & x_pool <= hi)
+        rows <- rbind(rows, data.frame(
+          code_label = sprintf("range %s to %s", lo, hi),
+          src = s, pool = p, stringsAsFactors = FALSE))
+      }
+    }
+  }
+
+  # System/NA = plain NA cells. For Stata-form, exclude tagged NAs (those are
+  # the per-tag rows above); for SPSS/no-mi, is.na captures only genuine
+  # system-missing since UDM codes are live values in the pre-masking column.
+  if (!is.null(mi) && identical(mi$representation, "stata")) {
+    sys_src  <- sum(is.na(pre_col)  & is.na(haven::na_tag(pre_col)))
+    sys_pool <- sum(is.na(pool_col) & is.na(haven::na_tag(pool_col)))
+  } else {
+    sys_src  <- sum(is.na(pre_col))
+    sys_pool <- sum(is.na(pool_col))
+  }
+  if (sys_src > 0L || sys_pool > 0L) {
+    rows <- rbind(rows, data.frame(code_label = .jst_label_system_missing,
+                                   src = sys_src, pool = sys_pool,
+                                   stringsAsFactors = FALSE))
+  }
+  rows
+}
+
+#' Internal helper: print the Case Processing Summary (CPS)
+#'
+#' Resolves a render spec from the .jst_cps_*_rules tables (via
+#' \code{.jst_resolve_cps_render}) and draws the top table (pipeline chain)
+#' and, where the spec calls for it, the bottom table (per-variable
+#' missing-data breakdown, totals or per_code tier). Contains no render-rule
+#' logic of its own; all show/hide decisions arrive pre-resolved.
+#'
+#' Display design = JStats_CPS_Rendering_Reference.txt (four layouts, Form B
+#' bottom). Missing-value semantics = JStats_Missing_Values_Reference.txt.
+#'
+#' @param sample_info List from \code{.jst_build_sample_info} (carries the
+#'   pipeline counts plus pre_pipeline_data / surviving_ids / analysis_vars).
+#' @param analysis_type Layout key: \code{"listwise"}, \code{"pairwise"},
+#'   \code{"per_var_desc"}, or \code{"per_var_freq"}.
+#' @param detail Per-call case.processing.detail override (NULL, "none",
+#'   "totals", "per_code"). NULL defers to the joutput tier default.
+#' @param notification_template,data,analysis_vars Listwise-discrepancy
+#'   notification inputs (per-variable layouts only); see the closure below.
+#' @return \code{invisible(NULL)}.
 #' @keywords internal
 .jst_print_case_processing <- function(sample_info,
                                        analysis_type        = "listwise",
+                                       detail                = NULL,
                                        notification_template = NULL,
                                        data                  = NULL,
                                        analysis_vars         = NULL) {
 
-  # Validate analysis_type: misuse here would otherwise produce a silently
-  # weird CPS, so error early with a clear message.
-  if (!analysis_type %in% c("listwise", "per_variable", "pairwise")) {
+  valid_layouts <- c("listwise", "pairwise", "per_var_desc", "per_var_freq")
+  if (!analysis_type %in% valid_layouts) {
     stop(".jst_print_case_processing(): analysis_type must be one of ",
-         "'listwise', 'per_variable', or 'pairwise'.", call. = FALSE)
+         paste(sprintf("'%s'", valid_layouts), collapse = ", "), ".",
+         call. = FALSE)
   }
 
   n_original <- sample_info$n_original
   n_analysis <- sample_info$n_analysis
-
   if (is.null(n_original) || n_original == 0) return(invisible(NULL))
 
-  # Local closure: print the listwise-discrepancy notification when its
-  # gating conditions are met. Used by every code path so the notification
-  # fires regardless of whether the CPS table itself prints. Returns
-  # invisible(TRUE) when the notification fires (so callers can know to
-  # force CPS printing for context); invisible(FALSE) otherwise.
-  print_notification_if_eligible <- function() {
-    if (analysis_type != "per_variable" ||
-        is.null(notification_template) ||
-        is.null(data) ||
-        is.null(analysis_vars) ||
-        length(analysis_vars) < 2 ||
-        getOption(".jst_output_level", "standard") == "minimal") {
-      return(invisible(FALSE))
-    }
-    # Suppress when jcomplete is active for this call: the user has
-    # already engaged with the missing-data question via jcomplete, so
-    # additional advice would be noise. (Refinement for partial-coverage
-    # case is on the to-do list.)
-    if (isTRUE(sample_info$complete_active)) {
-      return(invisible(FALSE))
-    }
-    listwise_n <- sum(stats::complete.cases(data[, analysis_vars, drop = FALSE]))
-    per_var_ns <- vapply(analysis_vars,
-                         function(v) sum(!is.na(data[[v]])),
-                         integer(1))
-    if (listwise_n < min(per_var_ns)) {
-      if (grepl("%d", notification_template, fixed = TRUE)) {
-        msg <- sprintf(notification_template, listwise_n)
-      } else {
-        msg <- notification_template
-      }
-      cat(msg, "\n\n", sep = "")
-      return(invisible(TRUE))
-    }
-    invisible(FALSE)
-  }
+  is_per_var <- analysis_type %in% c("per_var_desc", "per_var_freq")
 
-  # Helper: would the notification fire? Used to decide whether to force
-  # CPS printing when the auto-suppress logic would otherwise hide it.
-  notification_will_fire <- function() {
-    if (analysis_type != "per_variable" ||
-        is.null(notification_template) ||
-        is.null(data) ||
-        is.null(analysis_vars) ||
+  # ---- Listwise-discrepancy notification (per-variable layouts only) -------
+  # Fires when 2+ analysis variables AND listwise across them would drop
+  # cases beyond the smallest per-variable N. Independent of the CPS table.
+  notification_eligible <- function() {
+    if (!is_per_var || is.null(notification_template) ||
+        is.null(data) || is.null(analysis_vars) ||
         length(analysis_vars) < 2 ||
-        getOption(".jst_output_level", "standard") == "minimal") {
-      return(FALSE)
-    }
-    if (isTRUE(sample_info$complete_active)) {
+        getOption(".jst_output_level", "standard") == "minimal" ||
+        isTRUE(sample_info$complete_active)) {
       return(FALSE)
     }
     listwise_n <- sum(stats::complete.cases(data[, analysis_vars, drop = FALSE]))
     per_var_ns <- vapply(analysis_vars,
-                         function(v) sum(!is.na(data[[v]])),
-                         integer(1))
+                         function(v) sum(!is.na(data[[v]])), integer(1))
     listwise_n < min(per_var_ns)
   }
-
-  # Resolve the case.processing toggle to its three-state value:
-  #   FALSE - never print
-  #   TRUE  - always print
-  #   NULL  - "auto": print only when something happened
-  cps_setting <- .jst_resolve_toggle("case.processing", NULL)
-
-  if (isTRUE(cps_setting) == FALSE && !is.null(cps_setting)) {
-    # Explicitly FALSE - suppress CPS, but the notification still has
-    # its own conditions and should fire if eligible.
-    print_notification_if_eligible()
-    return(invisible(NULL))
+  fire_notification <- function() {
+    listwise_n <- sum(stats::complete.cases(data[, analysis_vars, drop = FALSE]))
+    msg <- if (grepl("%d", notification_template, fixed = TRUE)) {
+      sprintf(notification_template, listwise_n)
+    } else notification_template
+    cat(msg, "\n\n", sep = "")
   }
 
-  # Pipeline activity for this call.
+  # ---- Resolve the render spec from the rule tables ------------------------
+  pre <- sample_info$pre_pipeline_data
+  if (!is.null(pre) && !is.null(sample_info$surviving_ids)) {
+    pool <- pre[sample_info$surviving_ids, , drop = FALSE]
+  } else {
+    pool <- NULL
+  }
+  cps_vars <- intersect(sample_info$analysis_vars,
+                        if (is.null(pre)) character(0) else names(pre))
+
+  mi_list  <- if (length(cps_vars))
+                lapply(cps_vars, function(v) .jst_missing_info(pre[[v]]))
+              else list()
+  names(mi_list) <- cps_vars
+  has_udms  <- any(vapply(mi_list, function(mi)
+                 !is.null(mi) && !is.null(mi$codes) && nrow(mi$codes) > 0L,
+                 logical(1)))
+  has_sysna <- any(vapply(cps_vars, function(v) sum(is.na(pre[[v]])) > 0L,
+                          logical(1)))
+
   pipeline_active <- isTRUE(sample_info$complete_active) ||
                      isTRUE(sample_info$filter_active) ||
                      !is.null(sample_info$n_after_subset)
 
-  # Auto state (cps_setting = NULL): print only when something happened.
-  # Definition of "happened" depends on analysis type.
-  if (is.null(cps_setting)) {
-    listwise_excluded_any <-
-      analysis_type == "listwise" &&
-      !is.null(sample_info$n_excluded_missing) &&
-      sample_info$n_excluded_missing > 0
-    if (!pipeline_active && !listwise_excluded_any) {
-      # If a notification is going to fire, force CPS to print so the
-      # notification has the "Available N" anchor for context.
-      if (notification_will_fire()) {
-        # Fall through to print the CPS table; notification fires after.
-      } else {
-        print_notification_if_eligible()
-        return(invisible(NULL))
+  cps_toggle  <- .jst_resolve_toggle("case.processing", NULL)
+  detail_tier <- .jst_resolve_toggle("case.processing.detail", detail)
+  out_level   <- getOption(".jst_output_level", "standard")
+
+  spec <- .jst_resolve_cps_render(
+    layout          = analysis_type,
+    pipeline_active = pipeline_active,
+    has_udms        = isTRUE(has_udms),
+    has_sysna       = isTRUE(has_sysna),
+    output_level    = out_level,
+    detail_tier     = detail_tier,
+    cps_toggle      = cps_toggle)
+
+  fmt1 <- function(x) sprintf("%.1f", x)
+  dash <- "\u2014"
+  # Pad on DISPLAY width, not sprintf's byte-based field width: the em-dash
+  # is one column but three UTF-8 bytes, so sprintf("%Ns", ...) would under-
+  # pad dash cells and shift the row. padl/padr right/left-justify by glyph
+  # width so numeric and dash rows align.
+  padl <- function(x, w) { x <- as.character(x)
+    paste0(strrep(" ", max(0L, w - nchar(x, type = "width"))), x) }
+  padr <- function(x, w) { x <- as.character(x)
+    paste0(x, strrep(" ", max(0L, w - nchar(x, type = "width")))) }
+  dw   <- function(x) nchar(as.character(x), type = "width")
+
+  if (isTRUE(spec$render)) {
+
+    # ---- TOP TABLE: pipeline chain ----
+    if (isTRUE(spec$render_top)) {
+      labels <- "Original"; surv_v <- n_original; exc_v <- NA_integer_
+      prior  <- n_original
+
+      if (isTRUE(sample_info$complete_active) &&
+          !is.null(sample_info$n_after_complete)) {
+        lab <- if (!is.null(sample_info$complete_vars) &&
+                   length(sample_info$complete_vars))
+                 sprintf("jcomplete (%s)",
+                         paste(sample_info$complete_vars, collapse = ", "))
+               else "jcomplete"
+        labels <- c(labels, lab)
+        exc_v  <- c(exc_v, prior - sample_info$n_after_complete)
+        surv_v <- c(surv_v, sample_info$n_after_complete)
+        prior  <- sample_info$n_after_complete
+      }
+      if (isTRUE(sample_info$filter_active) &&
+          !is.null(sample_info$n_after_filter)) {
+        lab <- if (!is.null(sample_info$filter_expr) &&
+                   nzchar(sample_info$filter_expr))
+                 sprintf("jsubset (%s)", sample_info$filter_expr)
+               else "jsubset"
+        labels <- c(labels, lab)
+        exc_v  <- c(exc_v, prior - sample_info$n_after_filter)
+        surv_v <- c(surv_v, sample_info$n_after_filter)
+        prior  <- sample_info$n_after_filter
+      }
+      if (!is.null(sample_info$n_after_subset)) {
+        lab <- if (!is.null(sample_info$subset_expr) &&
+                   nzchar(sample_info$subset_expr))
+                 sprintf("subset = %s", sample_info$subset_expr)
+               else "subset"
+        labels <- c(labels, lab)
+        exc_v  <- c(exc_v, prior - sample_info$n_after_subset)
+        surv_v <- c(surv_v, sample_info$n_after_subset)
+        prior  <- sample_info$n_after_subset
+      }
+      if (isTRUE(spec$show_auto_listwise)) {
+        labels <- c(labels, "Auto-listwise")
+        exc_v  <- c(exc_v, sample_info$n_excluded_missing)
+        surv_v <- c(surv_v, n_analysis)
+        prior  <- n_analysis
+      }
+      labels <- c(labels, spec$endpoint_label)
+      exc_v  <- c(exc_v, NA_integer_)
+      surv_v <- c(surv_v, prior)
+
+      # Column widths sized to content (display width) so long labels and
+      # the multibyte em-dash both align. Header is indented 2, data rows 4;
+      # both pad their label field to the same absolute end column.
+      exc_strs  <- vapply(seq_along(labels), function(i)
+                     if (is.na(exc_v[i])) dash else as.character(exc_v[i]),
+                     character(1))
+      surv_strs <- as.character(surv_v)
+      pct_strs  <- fmt1(surv_v / n_original * 100)
+      h_ind <- 2L; r_ind <- 4L
+      lab_end <- max(h_ind + dw("Case Processing"), r_ind + max(dw(labels)))
+      exc_w  <- max(dw("Excluded"),    max(dw(exc_strs)))
+      surv_w <- max(dw("Surviving"),   max(dw(surv_strs)))
+      pct_w  <- max(dw("% Surviving"), max(dw(pct_strs)))
+      g <- "  "
+
+      cat("\n")
+      cat(strrep(" ", h_ind), padr("Case Processing", lab_end - h_ind), g,
+          padl("Excluded", exc_w), g, padl("Surviving", surv_w), g,
+          padl("% Surviving", pct_w), "\n", sep = "")
+      for (i in seq_along(labels)) {
+        cat(strrep(" ", r_ind), padr(labels[i], lab_end - r_ind), g,
+            padl(exc_strs[i], exc_w), g, padl(surv_strs[i], surv_w), g,
+            padl(pct_strs[i], pct_w), "\n", sep = "")
       }
     }
-  }
 
-  # Non-listwise callers also suppress when no pipeline is active, even
-  # under the "always print" setting -- they have nothing meaningful to
-  # show beyond Original = Available N. (Skip this guard if cps_setting
-  # is explicitly TRUE, OR if a notification is going to fire and needs
-  # the CPS table as anchor.)
-  if (!isTRUE(cps_setting) &&
-      analysis_type != "listwise" &&
-      !pipeline_active &&
-      !notification_will_fire()) {
-    print_notification_if_eligible()
-    return(invisible(NULL))
-  }
+    # ---- BOTTOM TABLE: missing-data breakdown (Form B) ----
+    if (isTRUE(spec$render_bottom) && !is.null(pool)) {
+      per_code <- identical(spec$resolved_tier, "per_code")
+      two_cols <- !isTRUE(spec$hide_second_col_pair)
+      n_pool   <- nrow(pool)
 
-  # Build the chain row-by-row, in time order. Pipeline drop rows appear
-  # only when the corresponding stage was active for this call. The
-  # listwise row is included only when analysis_type is "listwise"
-  # (always shown in that case, even when zero, since listwise is the
-  # deletion method these callers used).
-  labels <- character(0)
-  ns     <- integer(0)
+      # First pass: gather the rows to display per variable (skip variables
+      # with no missingness in either column), so widths can be sized to
+      # actual content.
+      disp <- list()
+      for (v in cps_vars) {
+        vr <- .jst_cps_var_rows(pre[[v]], pool[[v]], mi_list[[v]])
+        if (nrow(vr) == 0L || (sum(vr$src) == 0L && sum(vr$pool) == 0L)) next
+        rows <- if (per_code) vr
+                else data.frame(code_label = "Missing", src = sum(vr$src),
+                                pool = sum(vr$pool), stringsAsFactors = FALSE)
+        disp[[length(disp) + 1L]] <- list(var = v, rows = rows)
+      }
 
-  # Anchor: Original
-  labels <- c(labels, "Original")
-  ns     <- c(ns, n_original)
+      if (length(disp) > 0L) {
+        src_hdr  <- paste0("From ", n_original)
+        pool_hdr <- paste0("From ", n_pool)
+        all_lab  <- unlist(lapply(disp, function(d) d$rows$code_label))
+        all_src  <- unlist(lapply(disp, function(d) d$rows$src))
+        all_pool <- unlist(lapply(disp, function(d) d$rows$pool))
+        all_srcp <- fmt1(all_src  / n_original * 100)
+        all_plp  <- fmt1(all_pool / n_pool     * 100)
 
-  # jcomplete drop (if active)
-  prior_n <- n_original
-  if (isTRUE(sample_info$complete_active) &&
-      !is.null(sample_info$n_after_complete)) {
-    excluded <- prior_n - sample_info$n_after_complete
-    labels <- c(labels, "Excluded by jcomplete")
-    ns     <- c(ns, excluded)
-    prior_n <- sample_info$n_after_complete
-  }
+        h_ind <- 2L; c_ind <- 6L
+        lab_end <- max(h_ind + dw("Missing-data breakdown"),
+                       c_ind + max(dw(all_lab)))
+        srcn_w  <- max(dw(src_hdr),  max(dw(all_src)))
+        pct_w   <- max(dw("%"), max(dw(all_srcp), dw(all_plp)))
+        pooln_w <- max(dw(pool_hdr), max(dw(all_pool)))
+        g <- "  "
 
-  # jsubset drop (if active)
-  if (isTRUE(sample_info$filter_active) &&
-      !is.null(sample_info$n_after_filter)) {
-    excluded <- prior_n - sample_info$n_after_filter
-    label    <- if (!is.null(sample_info$filter_expr) &&
-                    nzchar(sample_info$filter_expr)) {
-      paste0("Excluded by jsubset (", sample_info$filter_expr, ")")
-    } else {
-      "Excluded by jsubset"
+        emit <- function(indent, lab, lab_w, c1, p1, c2, p2) {
+          if (two_cols)
+            cat(strrep(" ", indent), padr(lab, lab_w), g, padl(c1, srcn_w), g,
+                padl(p1, pct_w), g, padl(c2, pooln_w), g, padl(p2, pct_w),
+                "\n", sep = "")
+          else
+            cat(strrep(" ", indent), padr(lab, lab_w), g, padl(c1, srcn_w), g,
+                padl(p1, pct_w), "\n", sep = "")
+        }
+
+        cat("\n")
+        emit(h_ind, "Missing-data breakdown", lab_end - h_ind,
+             src_hdr, "%", pool_hdr, "%")
+        for (d in disp) {
+          cat(strrep(" ", 4L), d$var, "\n", sep = "")
+          for (j in seq_len(nrow(d$rows))) {
+            sc <- d$rows$src[j]; pl <- d$rows$pool[j]
+            emit(c_ind, d$rows$code_label[j], lab_end - c_ind,
+                 as.character(sc), fmt1(sc / n_original * 100),
+                 as.character(pl), fmt1(pl / n_pool * 100))
+          }
+        }
+      }
     }
-    labels <- c(labels, label)
-    ns     <- c(ns, excluded)
-    prior_n <- sample_info$n_after_filter
+    cat("\n")
   }
 
-  # subset drop (if a per-call subset was applied)
-  if (!is.null(sample_info$n_after_subset)) {
-    excluded <- prior_n - sample_info$n_after_subset
-    label    <- if (!is.null(sample_info$subset_expr) &&
-                    nzchar(sample_info$subset_expr)) {
-      paste0("Excluded by subset (", sample_info$subset_expr, ")")
-    } else {
-      "Excluded by subset"
-    }
-    labels <- c(labels, label)
-    ns     <- c(ns, excluded)
-    prior_n <- sample_info$n_after_subset
-  }
-
-  # Listwise drop (only for listwise callers)
-  if (analysis_type == "listwise") {
-    labels <- c(labels, "Excluded listwise")
-    ns     <- c(ns, sample_info$n_excluded_missing)
-  }
-
-  # Final-row label depends on analysis_type
-  final_label <- if (analysis_type == "listwise") "Analysis N" else "Available N"
-  labels <- c(labels, final_label)
-  ns     <- c(ns, n_analysis)
-
-  case_table <- data.frame(
-    Stage   = labels,
-    N       = ns,
-    Percent = sprintf("%.1f", ns / n_original * 100),
-    stringsAsFactors = FALSE
-  )
-
-  cat("\n")
-  .jst_print_table(case_table,
-                   col.names = c("Case Processing", "N", "%"),
-                   align     = c("l", "c", "c"),
-                   row.names = FALSE)
-  cat("\n")
-
-  # Per-variable missing-by-var diagnostic (listwise type only). Centralised
-  # here so call sites do not have to remember to gate-and-print it
-  # separately. Subject to the `missing` toggle and only fires when
-  # listwise excluded at least one case.
-  if (analysis_type == "listwise") {
-    show_missing <- .jst_resolve_toggle("missing", NULL)
-    if (isTRUE(show_missing) &&
-        !is.null(sample_info$n_excluded_missing) &&
-        sample_info$n_excluded_missing > 0) {
-      .jst_print_missing_detail(sample_info$missing_by_var)
-    }
-  }
-
-  # Listwise-discrepancy notification (per_variable type only). Fires when
-  # 2+ analysis variables AND listwise across all of them would exclude
-  # additional cases beyond the smallest per-variable N. Suppressed at
-  # "minimal" output tier and skipped when notification_template is NULL.
-  print_notification_if_eligible()
+  # Notification fires on its own conditions, table or no table.
+  if (notification_eligible()) fire_notification()
 
   invisible(NULL)
 }
@@ -3944,6 +4191,12 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 #'   \code{jdesc}/\code{jfreq}). The minimal tier sets this to
 #'   \code{FALSE}; the full tier sets it to \code{TRUE}; the standard
 #'   tier sets it to \code{NULL}.
+#' @param case.processing.detail Detail tier for the Case Processing
+#'   Summary's missing-data breakdown: \code{"none"} (no bottom
+#'   table), \code{"totals"} (one summed missing row per variable),
+#'   or \code{"per_code"} (per UDM code plus system-missing). The
+#'   minimal tier defaults to \code{"none"}, standard to
+#'   \code{"totals"}, full to \code{"per_code"}.
 #' @param var.labels Logical or NULL. Override the level's default for
 #'   the variable labels block.
 #' @param ref.categories Logical or NULL. Override the level's default
@@ -3970,10 +4223,14 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
+#' @param echo Logical; default TRUE. When FALSE, joutput() applies the
+#'   level/toggle change silently (the status panel is not printed). A bare
+#'   joutput() status query always prints regardless of echo.
 joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
                     posthoc = NULL, missing = NULL, diagnostics = NULL,
-                    case.processing = NULL, var.labels = NULL,
-                    ref.categories = NULL, udm.notice = NULL) {
+                    case.processing = NULL, case.processing.detail = NULL,
+                    var.labels = NULL,
+                    ref.categories = NULL, udm.notice = NULL, echo = TRUE) {
 
   valid_levels <- c("minimal", "standard", "full")
 
@@ -3981,8 +4238,10 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
   if (!missing(level) && is.null(level)) {
     options(.jst_output_level = NULL)
     options(.jst_output_toggles = NULL)
-    .cat_red("Output Settings\n")
-    cat("Reset to defaults (standard, no toggle overrides).\n\n")
+    if (echo) {
+      .cat_red("Output Settings\n")
+      cat("Reset to defaults (standard, no toggle overrides).\n\n")
+    }
     return(invisible(NULL))
   }
 
@@ -3995,6 +4254,15 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
   if (!is.null(missing))         toggle_args$missing         <- missing
   if (!is.null(diagnostics))     toggle_args$diagnostics     <- diagnostics
   if (!is.null(case.processing)) toggle_args$case.processing <- case.processing
+  if (!is.null(case.processing.detail)) {
+    if (!is.character(case.processing.detail) ||
+        length(case.processing.detail) != 1 ||
+        !(case.processing.detail %in% c("none", "totals", "per_code"))) {
+      stop("case.processing.detail must be one of: \"none\", \"totals\", ",
+           "\"per_code\".", call. = FALSE)
+    }
+    toggle_args$case.processing.detail <- case.processing.detail
+  }
   if (!is.null(var.labels))      toggle_args$var.labels      <- var.labels
   if (!is.null(ref.categories))  toggle_args$ref.categories  <- ref.categories
   if (!is.null(udm.notice))      toggle_args$udm.notice      <- udm.notice
@@ -4006,9 +4274,12 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
       current_toggles <- getOption(".jst_output_toggles", list())
       for (nm in names(toggle_args)) current_toggles[[nm]] <- toggle_args[[nm]]
       options(.jst_output_toggles = current_toggles)
+      # A toggle change respects echo.
+      if (echo) .jst_output_status()
+    } else {
+      # A bare joutput() query always prints, regardless of echo.
+      .jst_output_status()
     }
-    # Show current status
-    .jst_output_status()
     return(invisible(NULL))
   }
 
@@ -4026,7 +4297,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
     options(.jst_output_toggles = NULL)
   }
 
-  .jst_output_status()
+  if (echo) .jst_output_status()
   invisible(NULL)
 }
 
@@ -4042,7 +4313,8 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 
   # Show effective value for each toggle
   toggle_names <- c("effect.size", "ci", "levene", "posthoc", "missing", "diagnostics",
-                    "case.processing", "var.labels", "ref.categories", "udm.notice")
+                    "case.processing", "case.processing.detail",
+                    "var.labels", "ref.categories", "udm.notice")
   defaults     <- .jst_output_defaults[[level]]
 
   for (nm in toggle_names) {
@@ -4050,9 +4322,12 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
     effective    <- if (nm %in% names(toggles)) toggles[[nm]] else default_val
     override_str <- if (nm %in% names(toggles)) " (override)" else ""
 
+    # case.processing.detail carries a string tier (none/totals/per_code);
     # case.processing and udm.notice support three states (TRUE/FALSE/NULL=AUTO);
     # other toggles are binary.
-    label <- if (is.null(effective)) {
+    label <- if (identical(nm, "case.processing.detail")) {
+      toupper(effective)
+    } else if (is.null(effective)) {
       "AUTO"
     } else if (isTRUE(effective)) {
       "ON"
@@ -4243,8 +4518,11 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 #'   \code{\link{JeffsStatTools}} for the package overview.
 #'
 #' @export
+#' @param echo Logical; default TRUE. When FALSE, joptions() applies the
+#'   change silently, suppressing both the status panel and the convention
+#'   nudge. A bare joptions() status query always prints regardless of echo.
 joptions <- function(missing.convention = NULL, udm.convention.codes = NULL,
-                     data.dir = NULL) {
+                     data.dir = NULL, echo = TRUE) {
 
   mc_supplied <- !missing(missing.convention)
   cc_supplied <- !missing(udm.convention.codes)
@@ -4263,6 +4541,11 @@ joptions <- function(missing.convention = NULL, udm.convention.codes = NULL,
   # we inspect sys.call() directly. Detected shape: exactly one supplied
   # argument, unnamed in the source call, and NULL in value.
   call_args <- as.list(sys.call())[-1L]
+  # Ignore a named echo = ... when detecting the reset shape, so
+  # joptions(NULL, echo = FALSE) is still recognised as a (quiet) reset
+  # rather than read as two arguments.
+  arg_names <- names(call_args)
+  if (!is.null(arg_names)) call_args <- call_args[arg_names != "echo"]
   positional_null_reset <- length(call_args) == 1L &&
                            (is.null(names(call_args)) ||
                             names(call_args) == "") &&
@@ -4273,7 +4556,7 @@ joptions <- function(missing.convention = NULL, udm.convention.codes = NULL,
     options(.jst_options_missing_convention   = NULL)
     options(.jst_options_udm_convention_codes = NULL)
     options(.jst_options_data_dir             = NULL)
-    .jst_options_status()
+    if (echo) .jst_options_status()
     return(invisible(NULL))
   }
 
@@ -4320,11 +4603,48 @@ joptions <- function(missing.convention = NULL, udm.convention.codes = NULL,
     options(.jst_options_data_dir = data.dir)
   }
 
-  # Status panel, then nudge (per Session 28 Item 1 decision)
-  .jst_options_status()
-  if (trigger_nudge) .jst_options_nudge(missing.convention)
+  # Status panel, then nudge (per Session 28 Item 1 decision). echo = FALSE
+  # silences both -- a quiet call is fully quiet.
+  if (echo) {
+    .jst_options_status()
+    if (trigger_nudge) .jst_options_nudge(missing.convention)
+  }
 
   invisible(NULL)
+}
+
+#' Return the configured data folder
+#'
+#' Read-side companion to \code{\link{joptions}(data.dir = ...)}: returns the
+#' currently configured data folder as a string, for use in scripts that need
+#' the path itself (building a file path, checking existence, cleaning up test
+#' files) without reaching into package-internal option names.
+#'
+#' \code{joptions()} prints the folder but returns \code{invisible(NULL)};
+#' \code{jdata_dir()} returns it as a value. When no folder is configured, the
+#' \code{default} is returned (\code{"."}, the working directory, by default),
+#' so the result drops straight into \code{\link{file.path}}. Pass
+#' \code{default = NULL} to detect the unconfigured state explicitly.
+#'
+#' @param default Value returned when no data folder is configured. Defaults
+#'   to \code{"."} (the working directory).
+#' @return A length-one character string (the configured folder, or
+#'   \code{default}); or \code{default} unchanged when it is \code{NULL}.
+#' @seealso \code{\link{joptions}} to set the folder; \code{\link{jload}} and
+#'   \code{\link{jsave}}, which resolve files against it.
+#' @examples
+#' \dontrun{
+#' joptions(data.dir = "Data")
+#' jdata_dir()                                  # "Data"
+#' f <- file.path(jdata_dir(), "community.rds") # build a path in that folder
+#' if (file.exists(f)) file.remove(f)
+#'
+#' jdata_dir(default = NULL)                    # NULL if nothing configured
+#' }
+#' @export
+jdata_dir <- function(default = ".") {
+  dir <- getOption(".jst_options_data_dir", .jst_options_defaults$data.dir)
+  if (is.null(dir)) default else dir
 }
 
 
@@ -4389,7 +4709,12 @@ joptions <- function(missing.convention = NULL, udm.convention.codes = NULL,
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
-jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL) {
+#' @param case.processing.detail Per-call override of the Case
+#'   Processing Summary detail tier: one of \code{"none"},
+#'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+#'   uses the active \code{joutput()} level default.
+jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL,
+                  case.processing.detail = NULL) {
 
   # Resolve the first argument: explicit data frame, juse default,
   # vector input, or bare-symbol-as-variable-name (leading comma omitted).
@@ -4480,8 +4805,9 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL) {
     # Shared header for the whole by-group output: printed once (parallels
     # the no-by path), not repeated per variable. The grouping variable's
     # type/label block belongs here; each analysis variable's own block
-    # stays inside the per-variable loop below. (The .jst_print_case_processing
-    # call remains per-variable pending the CPS rendering work.)
+    # stays inside the per-variable loop below. The Case Processing Summary
+    # likewise renders once for the whole by-group output (per-variable
+    # layouts render CPS once; locked CPS rendering design).
     .cat_red(paste0("Descriptive Statistics by ", by_name,
                     " (", length(group_levels), " levels)\n"))
     if (.jst_default_used) .jst_default_note(.jst_data_name)
@@ -4493,9 +4819,10 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL) {
     }
     cat("\n")
 
-    for (v in variable_names) {
-      .jst_print_case_processing(sample_info, analysis_type = "per_variable")
+    .jst_print_case_processing(sample_info, analysis_type = "per_var_desc",
+                               detail = case.processing.detail)
 
+    for (v in variable_names) {
       if (.jst_resolve_toggle("var.labels", labels)) {
         cat(v, "\n", sep = "")
         cat("  Type: ", .format_var_type(original_dv_info[[v]]$class), "\n", sep = "")
@@ -4610,9 +4937,10 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL) {
 
   .jst_print_case_processing(
     sample_info,
-    analysis_type         = "per_variable",
+    analysis_type         = "per_var_desc",
+    detail                = case.processing.detail,
     notification_template = paste0(
-      "Note: Listwise deletion using jcomplete() first will reduce the Available N to %d."
+      "Note: Listwise deletion using jcomplete() first will reduce the Remaining N to %d."
     ),
     data          = data,
     analysis_vars = variable_names
@@ -4745,7 +5073,12 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL) {
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
-jfreq <- function(data, ..., subset = NULL, labels = NULL) {
+#' @param case.processing.detail Accepted for API symmetry. jfreq's
+#'   Case Processing Summary is top-table only (no missing-data
+#'   breakdown), so this argument has no effect; per-variable code
+#'   detail already appears in each variable's frequency table.
+jfreq <- function(data, ..., subset = NULL, labels = NULL,
+                  case.processing.detail = NULL) {
 
   # Resolve the first argument: explicit data frame, juse default,
   # vector input, or bare-symbol-as-variable-name (leading comma omitted).
@@ -4809,13 +5142,16 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL) {
   if (.jst_default_used) .jst_default_note(.jst_data_name)
   .jst_print_msgs(pipeline$msgs)
 
-  # Case Processing Summary (jfreq is non-listwise; the helper suppresses
-  # the table when no pipeline stage was active).
+  # Case Processing Summary (jfreq is the per-variable Frequencies layout:
+  # top table only, never a bottom; per-variable code detail already lives in
+  # each variable's own frequency table). case.processing.detail is accepted
+  # for API uniformity but is a no-op here.
   .jst_print_case_processing(
     sample_info,
-    analysis_type         = "per_variable",
+    analysis_type         = "per_var_freq",
+    detail                = case.processing.detail,
     notification_template = paste0(
-      "Note: Listwise deletion using jcomplete() first will reduce the Available N to %d."
+      "Note: Listwise deletion using jcomplete() first will reduce the Remaining N to %d."
     ),
     data          = data,
     analysis_vars = var_names_check
@@ -5353,9 +5689,14 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = NULL) {
 #'
 #' @export
 #' @importFrom stats t.test sd qt
+#' @param case.processing.detail Per-call override of the Case
+#'   Processing Summary detail tier: one of \code{"none"},
+#'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+#'   uses the active \code{joutput()} level default.
 jt <- function(formula, data, paired = FALSE, welch = FALSE,
                effect.size = NULL, levene = NULL, ci = NULL,
-               subset = NULL, labels = NULL, full = FALSE) {
+               subset = NULL, labels = NULL,
+               case.processing.detail = NULL, full = FALSE) {
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -5415,7 +5756,7 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   )
 
   # Case Processing Summary
-  .jst_print_case_processing(sample_info, analysis_type = "listwise")
+  .jst_print_case_processing(sample_info, analysis_type = "listwise", detail = case.processing.detail)
 
 
   group_var   <- data[[group_name]]
@@ -5694,9 +6035,14 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
 #'
 #' @export
 #' @importFrom stats aov oneway.test TukeyHSD qt
+#' @param case.processing.detail Per-call override of the Case
+#'   Processing Summary detail tier: one of \code{"none"},
+#'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+#'   uses the active \code{joutput()} level default.
 jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
                  effect.size = NULL, levene = NULL, ci = NULL,
-                 subset = NULL, labels = NULL, full = FALSE) {
+                 subset = NULL, labels = NULL,
+                 case.processing.detail = NULL, full = FALSE) {
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -5756,7 +6102,7 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
   )
 
   # Case Processing Summary
-  .jst_print_case_processing(sample_info, analysis_type = "listwise")
+  .jst_print_case_processing(sample_info, analysis_type = "listwise", detail = case.processing.detail)
 
   group_var   <- data[[group_name]]
   is_labelled <- haven::is.labelled(group_var)
@@ -6085,9 +6431,13 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
 #'
 #' @importFrom stats chisq.test
 #' @export
+#' @param case.processing.detail Per-call override of the Case
+#'   Processing Summary detail tier: one of \code{"none"},
+#'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+#'   uses the active \code{joutput()} level default.
 jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
                       row.pct = TRUE, col.pct = FALSE, subset = NULL,
-                      labels = NULL) {
+                      labels = NULL, case.processing.detail = NULL) {
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -6132,7 +6482,7 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
   )
 
   # Case Processing Summary
-  .jst_print_case_processing(sample_info, analysis_type = "listwise")
+  .jst_print_case_processing(sample_info, analysis_type = "listwise", detail = case.processing.detail)
 
   row_var <- data[[row_name]]
   col_var <- data[[col_name]]
@@ -6348,7 +6698,12 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
 #'
 #' @importFrom stats cor.test complete.cases
 #' @export
-jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = NULL) {
+#' @param case.processing.detail Per-call override of the Case
+#'   Processing Summary detail tier: one of \code{"none"},
+#'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+#'   uses the active \code{joutput()} level default.
+jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = NULL,
+                  case.processing.detail = NULL) {
 
   # Resolve the first argument: explicit data frame, juse default,
   # or bare-symbol-as-variable-name (leading comma omitted).
@@ -6414,7 +6769,7 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = NULL) {
 
   # Case Processing Summary (jcorr is pairwise; the helper suppresses
   # the table when no pipeline stage was active).
-  .jst_print_case_processing(sample_info, analysis_type = "pairwise")
+  .jst_print_case_processing(sample_info, analysis_type = "pairwise", detail = case.processing.detail)
 
   cor_data <- data[, variable_names, drop = FALSE]
 
@@ -7099,9 +7454,14 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = NULL) {
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
+#' @param case.processing.detail Per-call override of the Case
+#'   Processing Summary detail tier: one of \code{"none"},
+#'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+#'   uses the active \code{joutput()} level default.
 jlm <- function(formula, data, subset = NULL, labels = NULL,
                 numeric = NULL, categorical = NULL,
-                diagnostics = NULL, full = FALSE, ...) {
+                diagnostics = NULL, full = FALSE,
+                case.processing.detail = NULL, ...) {
 
   .jst_check_args(
     list(...),
@@ -7524,7 +7884,7 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
   )
 
   # Case Processing Summary
-  .jst_print_case_processing(sample_info, analysis_type = "listwise")
+  .jst_print_case_processing(sample_info, analysis_type = "listwise", detail = case.processing.detail)
 
   # Variable labels
   if (show_var_labels) {
@@ -7869,10 +8229,15 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
 #'
 #' @export
 #' @importFrom stats glm binomial pchisq logLik as.formula
+#' @param case.processing.detail Per-call override of the Case
+#'   Processing Summary detail tier: one of \code{"none"},
+#'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+#'   uses the active \code{joutput()} level default.
 jlogistic <- function(formula, data, subset = NULL, labels = NULL,
                       numeric = NULL, categorical = NULL,
                       ci = NULL, classification = FALSE,
-                      diagnostics = NULL, full = FALSE, ...) {
+                      diagnostics = NULL, full = FALSE,
+                      case.processing.detail = NULL, ...) {
 
   .jst_check_args(
     list(...),
@@ -8190,7 +8555,7 @@ jlogistic <- function(formula, data, subset = NULL, labels = NULL,
   )
 
   # Case Processing Summary
-  .jst_print_case_processing(sample_info, analysis_type = "listwise")
+  .jst_print_case_processing(sample_info, analysis_type = "listwise", detail = case.processing.detail)
 
   if (.jst_resolve_toggle("var.labels", labels)) {
     .print_var_labels(data, all.vars(formula))
@@ -8489,7 +8854,12 @@ jlogistic <- function(formula, data, subset = NULL, labels = NULL,
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
-jalpha <- function(data, ..., subset = NULL, labels = NULL) {
+#' @param case.processing.detail Per-call override of the Case
+#'   Processing Summary detail tier: one of \code{"none"},
+#'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+#'   uses the active \code{joutput()} level default.
+jalpha <- function(data, ..., subset = NULL, labels = NULL,
+                   case.processing.detail = NULL) {
 
   # Resolve the first argument: explicit data frame, juse default,
   # or bare-symbol-as-variable-name (leading comma omitted).
@@ -8558,7 +8928,7 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL) {
 
   # Case Processing Summary (standard CPS chain; jalpha uses listwise
   # deletion across all scale items)
-  .jst_print_case_processing(sample_info, analysis_type = "listwise")
+  .jst_print_case_processing(sample_info, analysis_type = "listwise", detail = case.processing.detail)
 
   # Overall Cronbach's Alpha
   k             <- ncol(items_complete)
@@ -11998,20 +12368,33 @@ jconvert <- function(data, to = NULL, ..., vars = NULL, udm.notice = TRUE) {
 #' jload("mydata.csv")
 #' jload("mydata.rds")
 #'
-#'#' # Extension omitted — jload searches for a matching file automatically
+#' # Extension omitted — jload searches for a matching file automatically
 #' jload("mydata")
 #'
 #' # Full file path
 #' jload("C:/Projects/Data/mydata.dta")
+#'
+#' # Quiet load (e.g. in a .Rprofile or startup script): suppresses the
+#' # informational messages while still loading. Errors and warnings still show.
+#' jload("mydata.rds", name = "MyData", quiet = TRUE)
 #' }
 #'
 #' @seealso \code{\link{JeffsStatTools}} for the package overview,
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
+#' @param quiet Logical; default FALSE. When TRUE, suppresses jload()'s
+#'   informational messages (file found, load summary, default-data note,
+#'   and the UDM narrative, overriding udm.notice). Errors, warnings, the
+#'   multi-sheet advisory, and the overwrite prompt are still shown.
 jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
                   check.missing = TRUE, sheet = NULL,
-                  preserve.udm = TRUE, udm.notice = NULL) {
+                  preserve.udm = TRUE, udm.notice = NULL, quiet = FALSE) {
+
+  # quiet = TRUE mutes informational messages (file found, load summary,
+  # default-data note, and the UDM narrative). Errors, warnings, the
+  # multi-sheet advisory, and the overwrite prompt are never muted.
+  say <- function(...) if (!quiet) message(...)
 
   # --- Validate file argument ------------------------------------------------
   if (missing(file) || !is.character(file) || length(file) != 1 ||
@@ -12050,14 +12433,15 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
           paste0("Searched in: ",
                  paste(ifelse(search_dirs == ".", "working directory",
                               paste0(search_dirs, " folder")),
-                       collapse = " and "))
+                       collapse = " and "),
+                 .jst_missing_data_dir_note())
         else
           paste0("Searched in: ", .jst_norm_path(dirname(file))),
         call. = FALSE
       )
     }
     if (length(found) == 1) {
-      message("Found ", basename(found), " in ", .jst_norm_path(dirname(found)))
+      say("Found ", basename(found), " in ", .jst_norm_path(dirname(found)))
       file    <- found
       ext     <- tolower(tools::file_ext(file))
       has_dir <- TRUE
@@ -12213,7 +12597,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   assign(obj_name, df, envir = target_env)
 
   # --- Summary message -------------------------------------------------------
-  message(
+  say(
     "Loaded ", obj_name,
     " (", .jst_format_label(ext), "; ",
     format(nrow(df), big.mark = ","), " cases, ",
@@ -12223,7 +12607,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   # --- Set as default with juse() if requested -------------------------------
   if (use) {
     options(.jst_default_data = obj_name)
-    message("Default data frame set to: ", obj_name)
+    say("Default data frame set to: ", obj_name)
   }
 
   # --- UDM narrative notification --------------------------------------------
@@ -12240,7 +12624,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
       # NULL / auto mode — show only if not yet shown this session
       !isTRUE(getOption(".jst_udm_notice_shown", FALSE))
     }
-    if (show_notice) {
+    if (show_notice && !quiet) {
       message(.jst_format_udm_narrative(udm_info, preserve.udm))
       options(.jst_udm_notice_shown = TRUE)
     }
@@ -12753,6 +13137,27 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' - The working directory itself is always included as the final
 #'   search location.
 #'
+#' Internal: note for a configured-but-missing data.dir
+#'
+#' Returns a one-line note (with a leading newline) when
+#' \code{joptions(data.dir = ...)} points at a folder that does not currently
+#' exist; otherwise returns \code{""}. Appended to jload's not-found errors so
+#' a typo'd or stale \code{data.dir} is diagnosed where it bites rather than
+#' surfacing as a bare "searched in working directory". Uses the same
+#' \code{dir.exists()} test as \code{.jst_get_search_dirs()}, so it fires
+#' exactly when the configured folder was skipped from the search path.
+#'
+#' @keywords internal
+.jst_missing_data_dir_note <- function() {
+  data_dir <- getOption(".jst_options_data_dir", .jst_options_defaults$data.dir)
+  if (!is.null(data_dir) && !dir.exists(data_dir)) {
+    paste0("\nNote: the configured data folder '", data_dir,
+           "' does not exist (set via joptions(data.dir = ...)).")
+  } else {
+    ""
+  }
+}
+
 #' @keywords internal
 .jst_get_search_dirs <- function() {
   data_dir <- getOption(".jst_options_data_dir",
@@ -12802,7 +13207,8 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
     "Searched in: ",
     paste(ifelse(search_dirs == ".", "working directory",
                  paste0(search_dirs, " folder")),
-          collapse = " and "), "\n",
+          collapse = " and "),
+    .jst_missing_data_dir_note(), "\n",
     "Check that the filename and extension are correct.",
     call. = FALSE
   )

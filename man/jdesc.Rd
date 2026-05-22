@@ -4,7 +4,14 @@
 \alias{jdesc}
 \title{Descriptive statistics for one or more variables}
 \usage{
-jdesc(data, ..., by = NULL, subset = NULL, labels = NULL)
+jdesc(
+  data,
+  ...,
+  by = NULL,
+  subset = NULL,
+  labels = NULL,
+  case.processing.detail = NULL
+)
 }
 \arguments{
 \item{data}{A data frame, or a numeric vector.}
@@ -21,6 +28,11 @@ jcomplete and jsubset. Does not affect other function calls.}
 
 \item{labels}{Logical. If \code{TRUE} (default), prints the variable type
 and label (or "None") for each variable before the table.}
+
+\item{case.processing.detail}{Per-call override of the Case
+Processing Summary detail tier: one of \code{"none"},
+\code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
+uses the active \code{joutput()} level default.}
 }
 \value{
 Invisibly returns a list of class \code{jst_desc} containing:
