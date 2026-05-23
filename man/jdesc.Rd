@@ -52,10 +52,13 @@ printed first, followed by a block showing the type and variable label
 line before the table. For multiple variables, one type/label entry is
 printed per variable before the shared table.
 
-Handles haven-labelled, factor, and plain numeric variables. If a factor
-with text categories is passed, a warning is issued directing the user
-to \code{jfreq()} instead. Also accepts a simple numeric vector. Supports
-grouped descriptives via the \code{by} parameter.
+Summarizes numeric, haven-labelled, logical, numeric-coded factor, and
+numeric-looking character variables. Variables that cannot be summarized
+--- text factors, text character variables, and date/time variables ---
+are skipped with a warning directing the user to \code{jfreq()} (date/time
+variables are not supported here). When every requested variable is
+unsummarizable, jdesc() stops with an error. Also accepts a simple numeric
+vector. Supports grouped descriptives via the \code{by} parameter.
 
 Haven-labelled variables are reported as \code{haven_labelled (Categorical)}
 in the type line; the uninformative \code{vctrs_vctr} class is suppressed.

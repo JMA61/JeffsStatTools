@@ -2641,6 +2641,177 @@
 }
 
 
+#' Internal helper: classify a variable for descriptive summarization
+#'
+#' Single source of truth for \code{jdesc()}'s decision about whether a
+#' variable can be summarized with descriptive statistics (Min/Max/Mean/SD)
+#' and, if so, how it is coerced to numeric. Used by both the ungrouped and
+#' the by-group paths so the two cannot drift apart.
+#'
+#' Summarized: plain numeric, haven-labelled (numeric underlying), logical
+#' (as 0/1), factors whose levels are numeric, and character columns whose
+#' values are numbers stored as text (a note is attached in that case).
+#' Refused: factors with text categories, character columns that are true
+#' text, date/time variables (\code{Date}, \code{POSIXct}, \code{POSIXlt},
+#' \code{difftime}), and any other type (list, complex, raw).
+#'
+#' @param x A single variable (vector / data-frame column).
+#' @param var_name The variable's name, used to build messages.
+#'
+#' @return A list with elements \code{summarisable} (logical), \code{num}
+#'   (numeric vector ready to summarize, or NULL), \code{note} (an
+#'   informational message to emit even though the variable is summarized,
+#'   or NULL), and \code{refusal} (the message explaining why the variable
+#'   cannot be summarized, or NULL).
+#'
+#' @keywords internal
+.jst_classify_desc_var <- function(x, var_name) {
+  no  <- function(msg) list(summarisable = FALSE, num = NULL, note = NULL, refusal = msg)
+  yes <- function(num, note = NULL) list(summarisable = TRUE, num = num, note = note, refusal = NULL)
+
+  # Date/time types: not supported here (a dedicated function handles these).
+  if (inherits(x, c("Date", "POSIXct", "POSIXlt", "difftime"))) {
+    return(no(paste0("'", var_name, "' is a date/time variable; jdesc() does ",
+                     "not summarize dates or times.")))
+  }
+
+  # haven-labelled (numeric underlying): coerce and summarize.
+  if (haven::is.labelled(x)) {
+    return(yes(as.numeric(x)))
+  }
+
+  # Logical: summarize as 0/1 (Mean = proportion TRUE), like a 0/1 dichotomy.
+  if (is.logical(x)) {
+    return(yes(as.numeric(x)))
+  }
+
+  # Factor: numeric-coded levels summarize; text levels refuse.
+  if (is.factor(x)) {
+    num <- suppressWarnings(as.numeric(as.character(x)))
+    if (all(is.na(num[!is.na(x)]))) {
+      return(no(paste0("'", var_name, "' is a factor with text categories and ",
+                       "cannot be summarized with descriptive statistics. Use ",
+                       "jfreq() instead for categorical variables.")))
+    }
+    return(yes(num))
+  }
+
+  # Character: numeric-looking text summarizes (with a note); true text refuses.
+  if (is.character(x)) {
+    num <- suppressWarnings(as.numeric(x))
+    if (all(is.na(num[!is.na(x)]))) {
+      return(no(paste0("'", var_name, "' is a character (text) variable and ",
+                       "cannot be summarized with descriptive statistics. Use ",
+                       "jfreq() instead for categorical variables.")))
+    }
+    return(yes(num, note = paste0("'", var_name, "' is stored as text but ",
+                                  "contains numeric values; summarizing it ",
+                                  "numerically.")))
+  }
+
+  # Plain numeric (integer / double).
+  if (is.numeric(x)) {
+    return(yes(as.numeric(x)))
+  }
+
+  # Anything else (list, complex, raw, ...): refuse with a generic message.
+  no(paste0("'", var_name, "' is of type ", typeof(x), " and cannot be ",
+            "summarized with descriptive statistics."))
+}
+
+#' Internal helper: classify a variable's analysis-relevant type "kind"
+#'
+#' Single source of truth for the variable-type distinctions the analysis
+#' functions and the type gate care about. Returns the kind plus, for the
+#' numeric-ish kinds, the coerced numeric vector. Kinds: "numeric",
+#' "labelled", "logical", "numeric_factor", "numeric_text" (numbers stored
+#' as text), "text_factor", "text_character", "datetime"
+#' (Date/POSIXct/POSIXlt/difftime), "complex", "raw", "list", "other".
+#' (\code{.jst_classify_desc_var()} makes the same distinctions for jdesc;
+#' the two are candidates to share this detector in a later tidy-up.)
+#'
+#' @param x A variable / data-frame column.
+#' @return A list with \code{kind} (character) and \code{num} (numeric
+#'   vector for numeric-ish kinds, otherwise NULL).
+#' @keywords internal
+.jst_var_kind <- function(x) {
+  if (inherits(x, c("Date", "POSIXct", "POSIXlt", "difftime")))
+    return(list(kind = "datetime", num = NULL))
+  if (is.complex(x)) return(list(kind = "complex", num = NULL))
+  if (is.raw(x))     return(list(kind = "raw",     num = NULL))
+  if (haven::is.labelled(x)) return(list(kind = "labelled", num = as.numeric(x)))
+  if (is.logical(x)) return(list(kind = "logical", num = as.numeric(x)))
+  if (is.factor(x)) {
+    num <- suppressWarnings(as.numeric(as.character(x)))
+    if (all(is.na(num[!is.na(x)]))) return(list(kind = "text_factor", num = NULL))
+    return(list(kind = "numeric_factor", num = num))
+  }
+  if (is.character(x)) {
+    num <- suppressWarnings(as.numeric(x))
+    if (all(is.na(num[!is.na(x)]))) return(list(kind = "text_character", num = NULL))
+    return(list(kind = "numeric_text", num = num))
+  }
+  if (is.list(x))    return(list(kind = "list",    num = NULL))  # POSIXlt handled above
+  if (is.numeric(x)) return(list(kind = "numeric", num = as.numeric(x)))
+  list(kind = "other", num = NULL)
+}
+
+#' Internal helper: build the analysis type-gate error message
+#'
+#' @param var_name The offending variable's name.
+#' @param kind The kind returned by \code{.jst_var_kind()}.
+#' @param fn_label A short noun phrase for the function (e.g. "a t-test").
+#' @return Character scalar suitable for \code{stop(call. = FALSE)}.
+#' @keywords internal
+.jst_analysis_type_error_msg <- function(var_name, kind, fn_label) {
+  if (kind == "datetime") {
+    return(paste0("'", var_name, "' is a date/time variable and cannot be used in ",
+      fn_label, ". Convert it to an elapsed duration first, e.g. ",
+      "as.numeric(difftime(end, start, units = \"days\"))."))
+  }
+  if (kind %in% c("complex", "raw", "list", "other")) {
+    return(paste0("'", var_name, "' is of type ", kind,
+      " and cannot be used in ", fn_label, "."))
+  }
+  if (kind == "numeric_text") {
+    return(paste0("'", var_name, "' is numbers stored as text. Convert it with ",
+      "as.numeric() before using it in ", fn_label, "."))
+  }
+  paste0("'", var_name, "' is a categorical (text) variable and cannot be used in ",
+    fn_label, ", which needs a numeric variable.")
+}
+
+#' Internal helper: gate a variable for use in an analysis function
+#'
+#' Stops with a clean, variable-naming error when the variable's type cannot
+#' be used in the calling analysis. Date/time, complex, list, and raw are
+#' refused for every role; text (factor or character) and numbers-stored-as-
+#' text are additionally refused when a numeric variable is required.
+#' Accepted variables pass through; the returned kind carries the coerced
+#' numeric for callers that want it.
+#'
+#' @param x The variable / column.
+#' @param var_name The variable's name (for the message).
+#' @param requires_numeric TRUE for roles that need a numeric variable
+#'   (continuous DV, correlation variable, scale item); FALSE for roles where
+#'   a categorical variable is valid (grouping variable, regression predictor,
+#'   logistic DV).
+#' @param fn_label A short noun phrase for the function (e.g. "a t-test").
+#' @return Invisibly, the \code{.jst_var_kind()} result.
+#' @keywords internal
+.jst_check_analysis_var <- function(x, var_name, requires_numeric = TRUE,
+                                    fn_label = "this analysis") {
+  k <- .jst_var_kind(x)
+  always_refuse <- c("datetime", "complex", "raw", "list", "other")
+  num_refuse    <- c("text_factor", "text_character", "numeric_text")
+  if (k$kind %in% always_refuse ||
+      (requires_numeric && k$kind %in% num_refuse)) {
+    stop(.jst_analysis_type_error_msg(var_name, k$kind, fn_label), call. = FALSE)
+  }
+  invisible(k)
+}
+
+
 #' Internal helper: dichotomy classifier
 #'
 #' Returns information about whether a variable is a two-value (dichotomous)
@@ -4666,10 +4837,13 @@ jdata_dir <- function(default = ".") {
 #' line before the table. For multiple variables, one type/label entry is
 #' printed per variable before the shared table.
 #'
-#' Handles haven-labelled, factor, and plain numeric variables. If a factor
-#' with text categories is passed, a warning is issued directing the user
-#' to \code{jfreq()} instead. Also accepts a simple numeric vector. Supports
-#' grouped descriptives via the \code{by} parameter.
+#' Summarizes numeric, haven-labelled, logical, numeric-coded factor, and
+#' numeric-looking character variables. Variables that cannot be summarized
+#' --- text factors, text character variables, and date/time variables ---
+#' are skipped with a warning directing the user to \code{jfreq()} (date/time
+#' variables are not supported here). When every requested variable is
+#' unsummarizable, jdesc() stops with an error. Also accepts a simple numeric
+#' vector. Supports grouped descriptives via the \code{by} parameter.
 #'
 #' Haven-labelled variables are reported as \code{haven_labelled (Categorical)}
 #' in the type line; the uninformative \code{vctrs_vctr} class is suppressed.
@@ -4761,6 +4935,53 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL,
   }
   .jst_check_vars(data, check_names, .jst_data_name)
 
+  # Classify each analysis variable for summarizability. Shared by both the
+  # grouped and ungrouped paths so the two cannot diverge. Numeric, labelled,
+  # logical, numeric-coded factors, and numeric-looking text are summarized;
+  # text factors, text character, date/time, and other types are refused.
+  desc_class <- stats::setNames(
+    lapply(variable_names, function(v) .jst_classify_desc_var(data[[v]], v)),
+    variable_names
+  )
+  is_good   <- vapply(desc_class, function(z) isTRUE(z$summarisable), logical(1))
+  good_vars <- variable_names[is_good]
+  bad_vars  <- variable_names[!is_good]
+
+  # If every requested variable is unsummarizable, stop before printing
+  # anything. Mixed cases proceed: good variables are summarized and each
+  # bad variable raises a warning.
+  if (length(good_vars) == 0) {
+    reasons <- vapply(variable_names, function(v) desc_class[[v]]$refusal,
+                      character(1))
+    if (length(variable_names) == 1L) {
+      stop(reasons[[1L]], call. = FALSE)
+    }
+    stop(paste0("None of the requested variables can be summarized with ",
+                "descriptive statistics:\n",
+                paste0("  - ", reasons, collapse = "\n")), call. = FALSE)
+  }
+
+  # Per-variable notes for a summarized variable: the categorical-like
+  # caution (small-range labelled / whole-number 0-6) and the numbers-as-text
+  # note. Defined once so both paths warn identically. `dat` is passed
+  # explicitly because the data frame is reassigned by the pipeline below.
+  .emit_good_notes <- function(v, dat) {
+    if (.jst_is_discrete_integer(dat[[v]], v, .jst_data_name)) {
+      warning(paste0("'", v, "' has categorical-like structure ",
+                     "(small-range integer or labelled values). ",
+                     "Descriptive statistics may not be meaningful. ",
+                     "Use jfreq() for frequency tables."),
+              call. = FALSE)
+    }
+    if (!is.null(desc_class[[v]]$note)) {
+      warning(desc_class[[v]]$note, call. = FALSE)
+    }
+  }
+  # Mixed case: one warning per variable that could not be summarized.
+  .emit_bad_refusals <- function() {
+    for (v in bad_vars) warning(desc_class[[v]]$refusal, call. = FALSE)
+  }
+
   # -- Grouped descriptives ---------------------------------------------------
   if (!rlang::quo_is_null(by_quo)) {
     by_name <- rlang::quo_name(by_quo)
@@ -4793,13 +5014,13 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL,
                                     subset_expr = subset_expr, envir = parent.frame())
     data     <- pipeline$data
 
-    # Build sample_info once for the entire by-group output. For jdesc the
-    # analysis sample is the post-pipeline data; per-variable Ns are
+    # Build sample_info once for the entire by-group output. Only the
+    # summarizable (good) analysis variables contribute. Per-variable Ns are
     # reported in each mini-table.
     sample_info <- .jst_build_sample_info(
       pipeline_counts = pipeline$pipeline_counts,
       data            = pipeline$data,
-      analysis_vars   = c(variable_names, by_name),
+      analysis_vars   = c(good_vars, by_name),
       n_analysis      = nrow(data)
     )
     # Shared header for the whole by-group output: printed once (parallels
@@ -4822,34 +5043,21 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL,
     .jst_print_case_processing(sample_info, analysis_type = "per_var_desc",
                                detail = case.processing.detail)
 
-    for (v in variable_names) {
+    for (v in good_vars) {
       if (.jst_resolve_toggle("var.labels", labels)) {
         cat(v, "\n", sep = "")
         cat("  Type: ", .format_var_type(original_dv_info[[v]]$class), "\n", sep = "")
         cat("  Variable label: ", original_dv_info[[v]]$label, "\n", sep = "")
       }
 
-      # Warn if DV has categorical-like structure (small-range labelled or
-      # whole-number 0-6). Uses the unified classifier so haven-labelled
-      # variables with many distinct values (e.g. Income with 10 broad
-      # categories) are NOT flagged.
-      if (.jst_is_discrete_integer(data[[v]], v, .jst_data_name)) {
-        warning(paste0("'", v, "' has categorical-like structure ",
-                       "(small-range integer or labelled values). ",
-                       "Descriptive statistics may not be meaningful. ",
-                       "Use jfreq() for frequency tables."),
-                call. = FALSE)
-      }
+      .emit_good_notes(v, data)
       cat("\n")
 
-      dv_data <- data[[v]]
-      if (haven::is.labelled(dv_data)) {
-        dv_data <- as.numeric(dv_data)
-      } else if (is.factor(dv_data)) {
-        dv_data <- suppressWarnings(as.numeric(as.character(dv_data)))
-      } else {
-        dv_data <- as.numeric(dv_data)
-      }
+      # Coerce to numeric via the shared classifier. Text factors, text
+      # character, and date/time variables never reach here (they are in
+      # bad_vars), so this also avoids the stray coercion warning the old
+      # bare as.numeric() produced for character columns.
+      dv_data <- .jst_classify_desc_var(data[[v]], v)$num
 
       group_var_chr <- as.character(data[[by_name]])
 
@@ -4884,13 +5092,17 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL,
       .jst_print_table(group_table, row.names = FALSE)
       cat("\n")
     }
+
+    # Mixed case: warn for any variables that could not be summarized.
+    .emit_bad_refusals()
+
     cat("\n")
 
     # Build sample_info for grouped descriptives
     sample_info <- .jst_build_sample_info(
       pipeline_counts = pipeline$pipeline_counts,
       data            = pipeline$data,
-      analysis_vars   = c(variable_names, by_name),
+      analysis_vars   = c(good_vars, by_name),
       n_analysis      = nrow(data)
     )
 
@@ -4925,13 +5137,14 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL,
   data     <- pipeline$data
   .jst_print_msgs(pipeline$msgs)
 
-  # Build sample_info (used by CPS and the return value). For jdesc the
-  # analysis sample is the post-pipeline data; per-variable Ns are
-  # reported in the descriptives table itself, not in CPS.
+  # Build sample_info (used by CPS and the return value). Only the
+  # summarizable (good) variables contribute. For jdesc the analysis sample
+  # is the post-pipeline data; per-variable Ns are reported in the
+  # descriptives table itself, not in CPS.
   sample_info <- .jst_build_sample_info(
     pipeline_counts = pipeline$pipeline_counts,
     data            = pipeline$data,
-    analysis_vars   = variable_names,
+    analysis_vars   = good_vars,
     n_analysis      = nrow(data)
   )
 
@@ -4943,54 +5156,25 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL,
       "Note: Listwise deletion using jcomplete() first will reduce the Remaining N to %d."
     ),
     data          = data,
-    analysis_vars = variable_names
+    analysis_vars = good_vars
   )
 
   if (.jst_resolve_toggle("var.labels", labels)) {
-    for (v in variable_names) {
+    for (v in good_vars) {
       cat(v, "\n", sep = "")
       cat("  Type: ", .format_var_type(original_var_info[[v]]$class), "\n", sep = "")
       cat("  Variable label: ", original_var_info[[v]]$label, "\n", sep = "")
     }
   }
 
-  # Warn for variables with categorical-like structure (small-range
-  # labelled or whole-number 0-6). Uses the unified classifier so
-  # haven-labelled variables with many distinct values (e.g. Income with
-  # 10 broad categories) are NOT flagged.
-  for (v in variable_names) {
-    if (.jst_is_discrete_integer(data[[v]], v, .jst_data_name)) {
-      warning(paste0("'", v, "' has categorical-like structure ",
-                     "(small-range integer or labelled values). ",
-                     "Descriptive statistics may not be meaningful. ",
-                     "Use jfreq() for frequency tables."),
-              call. = FALSE)
-    }
-  }
+  # Categorical-like and numbers-as-text notes for each summarized variable.
+  for (v in good_vars) .emit_good_notes(v, data)
 
   # -- Compute descriptives on filtered data ---------------------------------
-  descriptives_list <- lapply(variables, function(var) {
-    var_name <- rlang::quo_name(var)
-    var_data <- rlang::eval_tidy(var, data)
-
-    if (haven::is.labelled(var_data)) {
-      var_data <- as.numeric(var_data)
-    }
-
-    if (is.factor(var_data)) {
-      numeric_check <- suppressWarnings(as.numeric(as.character(var_data)))
-      if (all(is.na(numeric_check[!is.na(var_data)]))) {
-        warning(paste0("'", var_name,
-                       "' is a factor with text categories and cannot be summarised ",
-                       "with descriptive statistics. Use jfreq() instead for ",
-                       "categorical variables."), call. = FALSE)
-        return(NULL)
-      }
-      var_data <- numeric_check
-    }
-
+  descriptives_list <- lapply(good_vars, function(v) {
+    var_data <- .jst_classify_desc_var(data[[v]], v)$num
     data.frame(
-      Variable    = var_name,
+      Variable    = v,
       Total       = length(var_data),
       Non_missing = sum(!is.na(var_data)),
       Min         = round(min(var_data, na.rm = TRUE), 3),
@@ -5001,12 +5185,18 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, labels = NULL,
     )
   })
 
-  descriptives_list <- Filter(Negate(is.null), descriptives_list)
-  descriptives      <- do.call(rbind, descriptives_list)
+  descriptives <- do.call(rbind, descriptives_list)
 
-  cat("\n")
-  .jst_print_table(descriptives)
-  cat("\n")
+  # Defensive: with good_vars guaranteed non-empty this should always hold,
+  # but guard against an empty table reaching the renderer.
+  if (!is.null(descriptives) && nrow(descriptives) > 0) {
+    cat("\n")
+    .jst_print_table(descriptives)
+    cat("\n")
+  }
+
+  # Mixed case: warn for any variables that could not be summarized.
+  .emit_bad_refusals()
 
   ret <- list(
     descriptives = descriptives,
@@ -5742,6 +5932,11 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   group_name <- terms[2]
 
   .jst_check_vars(data, terms, .jst_data_name)
+  # Type gate (Session 46): refuse a date DV (would coerce silently to a day
+  # count) or a text/complex DV (would crash); grouping variable may be
+  # categorical. See .jst_check_analysis_var.
+  .jst_check_analysis_var(data[[terms[1L]]], terms[1L], TRUE, "a t-test")
+  for (.gv in terms[-1L]) .jst_check_analysis_var(data[[.gv]], .gv, FALSE, "a t-test")
 
   # Build analysis-level data frame (listwise on all formula vars) and
   # sample_info early so the Case Processing Summary can use them.
@@ -6088,6 +6283,10 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
   group_name <- terms[2]
 
   .jst_check_vars(data, terms, .jst_data_name)
+  # Type gate (Session 46): response must be numeric; grouping variable may be
+  # categorical. Date/time and complex/list/raw refused. See .jst_check_analysis_var.
+  .jst_check_analysis_var(data[[terms[1L]]], terms[1L], TRUE, "an ANOVA")
+  for (.gv in terms[-1L]) .jst_check_analysis_var(data[[.gv]], .gv, FALSE, "an ANOVA")
 
   # Build analysis-level data frame (listwise on all formula vars) and
   # sample_info early so the Case Processing Summary can use them.
@@ -6456,6 +6655,9 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
   col_name <- terms[2]
 
   .jst_check_vars(data, terms, .jst_data_name)
+  # Type gate (Session 46): both variables are categorical; refuse date/time
+  # and complex/list/raw. See .jst_check_analysis_var.
+  for (.gv in terms) .jst_check_analysis_var(data[[.gv]], .gv, FALSE, "a cross-tabulation")
 
   # Red title
   .cat_red("Cross-Tabulation\n")
@@ -6732,6 +6934,10 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = NULL,
   variable_names <- vapply(variables, rlang::quo_name, character(1))
 
   .jst_check_vars(data, variable_names, .jst_data_name)
+  # Type gate (Session 46): correlation needs numeric variables; refuse text,
+  # dates, and complex/list/raw up front (the loop below coerces the accepted
+  # labelled / numeric-factor variables). See .jst_check_analysis_var.
+  for (.gv in variable_names) .jst_check_analysis_var(data[[.gv]], .gv, TRUE, "a correlation")
 
   if (length(variable_names) < 2) {
     stop("jcorr() requires at least 2 variables. Only 1 was provided.", call. = FALSE)
@@ -7521,6 +7727,11 @@ jlm <- function(formula, data, subset = NULL, labels = NULL,
   original_formula_vars <- model_vars
 
   .jst_check_vars(data, model_vars, .jst_data_name)
+  # Type gate (Session 46): the response must be numeric; predictors may be
+  # numeric or categorical. Date/time and complex/list/raw refused in both
+  # roles. See .jst_check_analysis_var.
+  .jst_check_analysis_var(data[[model_vars[1L]]], model_vars[1L], TRUE, "a linear model")
+  for (.gv in model_vars[-1L]) .jst_check_analysis_var(data[[.gv]], .gv, FALSE, "a linear model")
 
   # -- Expand registered dummy variables ------------------------------------
   expanded         <- .jst_expand_dummies(data, formula, .jst_data_name)
@@ -8296,6 +8507,11 @@ jlogistic <- function(formula, data, subset = NULL, labels = NULL,
   original_formula_vars <- model_vars
 
   .jst_check_vars(data, model_vars, .jst_data_name)
+  # Type gate (Session 46): the response is binary and may be a text factor
+  # ("Yes"/"No"), so it passes as categorical here -- the dichotomy check below
+  # enforces two levels. Predictors may be numeric or categorical; date/time
+  # and complex/list/raw refused throughout. See .jst_check_analysis_var.
+  for (.gv in model_vars) .jst_check_analysis_var(data[[.gv]], .gv, FALSE, "a logistic regression")
 
   # -- Expand registered dummy variables ------------------------------------
   expanded         <- .jst_expand_dummies(data, formula, .jst_data_name)
@@ -8888,6 +9104,9 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL,
   variable_names <- vapply(variables, rlang::quo_name, character(1))
 
   .jst_check_vars(data, variable_names, .jst_data_name)
+  # Type gate (Session 46): scale items must be numeric; refuse text, dates,
+  # and complex/list/raw. See .jst_check_analysis_var.
+  for (.gv in variable_names) .jst_check_analysis_var(data[[.gv]], .gv, TRUE, "Cronbach's alpha")
 
   if (length(variable_names) < 2) {
     stop("jalpha() requires at least 2 items. Only 1 was provided.", call. = FALSE)
@@ -13734,6 +13953,137 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
   )
 }
 
+
+#' Internal: build jsave's error message for unsupported column types
+#'
+#' The statistical interchange formats (.sav, .dta, .xpt) cannot store
+#' complex, list, raw, or POSIXlt columns; the underlying writers abort
+#' mid-write with a low-level message that does not name the offending
+#' column (e.g. "Columns of type complex not supported yet", or "...type
+#' list..." for a POSIXlt column, which is list-backed). This helper
+#' produces one clean package-level error that names the column(s) and
+#' their type(s) and gives the right remedy for each: complex/list/raw have
+#' no sensible conversion and are dropped, while POSIXlt converts faithfully
+#' to POSIXct (the same instant, which the formats can store).
+#'
+#' @param vars Character vector of offending column names.
+#' @param types Character vector of the columns' types, parallel to
+#'   \code{vars} ("complex", "list", "raw", or "POSIXlt").
+#' @param ext The target extension ("sav", "dta", or "xpt").
+#' @param data_name The data frame's name, used in the suggested fix code.
+#'
+#' @return Character scalar suitable for \code{stop(call. = FALSE)}.
+#' @keywords internal
+.jst_jsave_unsupported_type_error_msg <- function(vars, types, ext, data_name) {
+
+  output_level <- getOption(".jst_output_level", "standard")
+  n     <- length(vars)
+  is_sg <- (n == 1)
+  noun  <- if (is_sg) "column" else "columns"
+  verb  <- if (is_sg) "is"     else "are"
+
+  fmt <- switch(ext,
+                sav = "SPSS format (.sav)",
+                dta = "Stata format (.dta)",
+                xpt = "SAS interchange format (.xpt)",
+                paste0(".", ext, " format"))
+
+  # Two remedy classes. drop: complex/list/raw have no representation and
+  # no sensible conversion. convert: POSIXlt is list-backed (so the writers
+  # reject it) but converts faithfully to POSIXct, which the formats store.
+  drop_vars    <- vars[types %in% c("complex", "list", "raw")]
+  convert_vars <- vars[types == "POSIXlt"]
+
+  drop_code <- if (length(drop_vars) > 0) {
+    paste0(data_name, "[c(",
+           paste0("\"", drop_vars, "\"", collapse = ", "),
+           ")] <- NULL")
+  } else NULL
+  convert_lines <- if (length(convert_vars) > 0) {
+    paste0("  ", data_name, "$", convert_vars, " <- as.POSIXct(",
+           data_name, "$", convert_vars, ")", collapse = "\n")
+  } else NULL
+
+  # --- Minimal tier -------------------------------------------------------
+  if (identical(output_level, "minimal")) {
+    parts <- character(0)
+    if (!is.null(drop_code))     parts <- c(parts, paste0("drop ", drop_code))
+    if (!is.null(convert_lines)) parts <- c(parts, "convert POSIXlt with as.POSIXct()")
+    return(paste0(
+      n, " ", noun, " ", verb, " of a type that ", fmt,
+      " cannot store. ", paste(parts, collapse = "; "), "."
+    ))
+  }
+
+  # --- Standard / full tier ----------------------------------------------
+  var_lines <- paste0("  ", vars, " (", types, ")", collapse = "\n")
+  out <- paste0(
+    n, " ", noun, " ", verb, " of a type that ", fmt, " cannot store:\n",
+    var_lines, "\n"
+  )
+  if (!is.null(drop_code)) {
+    out <- paste0(
+      out,
+      "\ncomplex/list/raw columns have no ", fmt, " representation and no ",
+      "sensible automatic conversion. Drop ",
+      if (length(drop_vars) == 1) "it" else "them", " before saving with:\n",
+      "  ", drop_code, "\n"
+    )
+  }
+  if (!is.null(convert_lines)) {
+    out <- paste0(
+      out,
+      "\nPOSIXlt columns are list-backed; convert to POSIXct (the same ",
+      "instant, which ", fmt, " can store) before saving with:\n",
+      convert_lines, "\n"
+    )
+  }
+  sub("\n$", "", out)
+}
+
+#' Internal: assemble jsave's combined pre-flight error
+#'
+#' jsave runs two independent pre-flight checks for the ReadStat formats
+#' (.sav/.dta/.xpt): one for column types the format cannot store, one for
+#' missing-value codes it cannot represent. When more than one fires on a
+#' single save, this helper frames the individual messages (each already
+#' built and tier-formatted by its own \code{.jst_jsave_*_error_msg()} helper)
+#' into one numbered error, so the user fixes everything and re-runs once
+#' rather than discovering the second problem only after fixing the first. A
+#' single firing is returned unchanged, so single-issue saves are byte-for-
+#' byte identical to the pre-accumulation behaviour.
+#'
+#' @param sections List of pre-built section messages, one per fired check.
+#' @param data_name Character. The data frame's name, for the header.
+#' @param ext Lowercase target extension ("sav", "dta", "xpt").
+#' @return Character scalar suitable for \code{stop(call. = FALSE)}.
+#' @keywords internal
+.jst_jsave_combined_error_msg <- function(sections, data_name, ext) {
+  if (length(sections) == 1L) return(sections[[1L]])
+
+  output_level <- getOption(".jst_output_level", "standard")
+
+  # Minimal tier: join the compact one-line section messages, no frame.
+  if (identical(output_level, "minimal")) {
+    return(paste(unlist(sections), collapse = " "))
+  }
+
+  # Standard / full tier: numbered sections under a unified header.
+  fmt <- switch(ext,
+                sav = "SPSS format (.sav)",
+                dta = "Stata format (.dta)",
+                xpt = "SAS interchange format (.xpt)",
+                paste0(".", ext, " format"))
+  numbered <- vapply(seq_along(sections),
+                     function(i) paste0("[", i, "] ", sections[[i]]),
+                     character(1))
+  paste0(
+    data_name, " cannot be saved to ", fmt, " yet -- ",
+    length(sections), " things to fix:\n\n",
+    paste(numbered, collapse = "\n\n"), "\n\n",
+    "Fix the above, then run jsave() again."
+  )
+}
 #' Internal: build jsave's case-correction note for .dta export
 #'
 #' Produces the informational note emitted by \code{jsave()} when
@@ -14137,67 +14487,97 @@ jsave <- function(data, file, overwrite = FALSE) {
     }
   }
 
-  # --- .sav pre-flight: tagged-NA missing values -----------------------------
-  # The .sav format has no representation for tagged-NA markers; haven
-  # would otherwise silently drop the marker distinctions on write. The
-  # pre-flight names the affected variables and directs the user to
-  # convert via jconvert(to = "spss") before saving, which preserves the
-  # distinctions as numeric codes that .sav can carry natively.
-  if (ext == "sav") {
-    tagged_vars <- .jst_has_tagged_na(data)
-    if (length(tagged_vars) > 0) {
-      stop(.jst_jsave_sav_error_msg(tagged_vars, data, data_name),
-           call. = FALSE)
-    }
-  }
+  # --- Pre-flight for the ReadStat formats (.sav / .dta / .xpt) --------------
+  # Two independent classes of problem can block a write to these formats:
+  #   (1) column types the format cannot store -- complex, list, and raw have
+  #       no representation; POSIXlt is list-backed and the writers reject it
+  #       (its remedy is conversion to POSIXct, not a drop). Otherwise haven's
+  #       writers abort mid-write with a low-level message that does not name
+  #       the offending column.
+  #   (2) missing-value codes the format cannot represent -- tagged NAs for
+  #       .sav/.xpt, SPSS-style UDMs for .dta. haven would silently drop these
+  #       (or, for .xpt, error mid-write and leave a partial file).
+  # Both are detected up front and reported together, so the user fixes
+  # everything in one pass and re-runs once instead of discovering the second
+  # class only after fixing the first. Each class's message is built (and
+  # tier-formatted) by its own helper; .jst_jsave_combined_error_msg() frames
+  # them when more than one fires and returns a lone firing unchanged.
+  # .csv stringifies and .xlsx/.rds carry every type, so none of those is gated.
+  if (ext %in% c("sav", "dta", "xpt")) {
+    sections <- list()
 
-  # --- .dta pre-write: SPSS-UDM pre-flight + SAS-to-Stata case correction ----
-  # .dta has no representation for SPSS-style missing values; haven would
-  # otherwise drop them silently. The pre-flight names the affected variables
-  # and tells the user how to convert (or drop) the metadata. The case
-  # correction converts any SAS-style missing values (.A, .B, ...) to
-  # Stata-style (.a, .b, ...) unconditionally because haven::write_dta()
-  # errors on SAS-style markers; the conversion is necessary, not just
-  # defensive.
-  if (ext == "dta") {
-    spss_vars <- .jst_has_spss_udm(data)
-    if (length(spss_vars) > 0) {
-      # Bucket the variables by missing-value form. A column carrying both
-      # na_values and na_range is placed in the range bucket — the range
-      # portion blocks conversion to Stata form, so the more restrictive
-      # remediation applies.
-      enum_vars  <- character(0)
-      range_vars <- character(0)
-      for (vname in spss_vars) {
-        info <- .jst_missing_info(data[[vname]])
-        if (!is.null(info$na_range)) {
-          range_vars <- c(range_vars, vname)
-        } else {
-          enum_vars  <- c(enum_vars, vname)
-        }
+    # (1) Unsupported column types -- shared across the three formats.
+    type_of <- vapply(data, function(col) {
+      if (is.complex(col)) {
+        "complex"
+      } else if (is.raw(col)) {
+        "raw"
+      } else if (inherits(col, "POSIXlt")) {
+        "POSIXlt"
+      } else if (is.list(col) && !inherits(col, "POSIXt") &&
+                 !is.data.frame(col)) {
+        "list"
+      } else {
+        NA_character_
       }
-      stop(.jst_jsave_dta_error_msg(enum_vars, range_vars, data_name),
+    }, character(1))
+    unsup_vars <- !is.na(type_of)
+    if (any(unsup_vars)) {
+      sections[[length(sections) + 1L]] <- .jst_jsave_unsupported_type_error_msg(
+        names(data)[unsup_vars], unname(type_of[unsup_vars]), ext, data_name)
+    }
+
+    # (2) Missing-value incompatibilities -- format-specific.
+    if (ext == "sav") {
+      tagged_vars <- .jst_has_tagged_na(data)
+      if (length(tagged_vars) > 0) {
+        sections[[length(sections) + 1L]] <-
+          .jst_jsave_sav_error_msg(tagged_vars, data, data_name)
+      }
+    } else if (ext == "dta") {
+      spss_vars <- .jst_has_spss_udm(data)
+      if (length(spss_vars) > 0) {
+        # Bucket by missing-value form. A column carrying both na_values and
+        # na_range goes in the range bucket -- the range portion blocks
+        # conversion to Stata form, so the stricter remediation applies.
+        enum_vars  <- character(0)
+        range_vars <- character(0)
+        for (vname in spss_vars) {
+          info <- .jst_missing_info(data[[vname]])
+          if (!is.null(info$na_range)) {
+            range_vars <- c(range_vars, vname)
+          } else {
+            enum_vars  <- c(enum_vars, vname)
+          }
+        }
+        sections[[length(sections) + 1L]] <-
+          .jst_jsave_dta_error_msg(enum_vars, range_vars, data_name)
+      }
+    } else if (ext == "xpt") {
+      tagged_vars <- .jst_has_tagged_na(data)
+      if (length(tagged_vars) > 0) {
+        sections[[length(sections) + 1L]] <-
+          .jst_jsave_xpt_error_msg(tagged_vars, data_name)
+      }
+    }
+
+    # Report all blocking issues at once (single message when only one fired).
+    if (length(sections) > 0) {
+      stop(.jst_jsave_combined_error_msg(sections, data_name, ext),
            call. = FALSE)
     }
 
-    conv <- .jst_lowercase_tagged_na_df(data)
-    data <- conv$data
-    if (conv$n_changed > 0) {
-      note <- .jst_jsave_dta_case_correction_note(conv$n_changed)
-      if (!is.null(note)) message(note)
-    }
-  }
-
-  # --- .xpt pre-flight: tagged NAs -------------------------------------------
-  # .xpt has no representation for tagged NAs; haven::write_xpt() emits a
-  # low-level "Failed to insert value..." error mid-write and leaves a
-  # partial file. The pre-flight gives the user one clean package-level
-  # error naming the affected variables before any write begins.
-  if (ext == "xpt") {
-    tagged_vars <- .jst_has_tagged_na(data)
-    if (length(tagged_vars) > 0) {
-      stop(.jst_jsave_xpt_error_msg(tagged_vars, data_name),
-           call. = FALSE)
+    # .dta only, once we know there are no blocking issues: lowercase any
+    # SAS-style tagged NAs (.A, .B, ...) to Stata convention (.a, .b, ...),
+    # which haven::write_dta() requires. Transparent fix with a note (full
+    # tier only), per Decision 6B.
+    if (ext == "dta") {
+      conv <- .jst_lowercase_tagged_na_df(data)
+      data <- conv$data
+      if (conv$n_changed > 0) {
+        note <- .jst_jsave_dta_case_correction_note(conv$n_changed)
+        if (!is.null(note)) message(note)
+      }
     }
   }
 
