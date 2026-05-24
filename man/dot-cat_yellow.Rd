@@ -2,13 +2,13 @@
 % Please edit documentation in R/7036Tools.R
 \name{.cat_yellow}
 \alias{.cat_yellow}
-\title{Internal helper: print text in yellow ANSI colour}
+\title{Internal helper: print text in yellow ANSI color}
 \usage{
 .cat_yellow(x)
 }
 \description{
 Used for informational/status notes where the text should be visually
 distinct from regular output but not alarming (matches the "warning/note"
-colour convention).
+color convention).
 }
 \keyword{internal}

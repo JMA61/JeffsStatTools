@@ -50,7 +50,7 @@ This matches the SPSS FILTER model: persistent state remains in effect
 until explicitly turned off via jsubset(off) / jcomplete(off).
 
 When the current dataset has no jsubset / jcomplete set but at least one
-other dataset does have an active setting, a yellow-coloured note is
+other dataset does have an active setting, a yellow-colored note is
 included in the pipeline messages to remind the user that case selection
 is not active for this particular dataset.
 }

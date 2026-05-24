@@ -2,7 +2,7 @@
 % Please edit documentation in R/7036Tools.R
 \name{.jst_build_sample_info}
 \alias{.jst_build_sample_info}
-\title{Internal helper: build standardised sample_info block}
+\title{Internal helper: build standardized sample_info block}
 \usage{
 .jst_build_sample_info(pipeline_counts, data, analysis_vars, n_analysis)
 }

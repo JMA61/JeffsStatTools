@@ -28,6 +28,6 @@ identifiers. Accepts the special values \code{core} and
 \code{all} (resolved against the supplied \code{core} and
 \code{all_plots} vectors) or an explicit character vector of plot
 names. Errors with a clear message listing the valid options if any
-name in \code{which} isn't recognised.
+name in \code{which} isn't recognized.
 }
 \keyword{internal}

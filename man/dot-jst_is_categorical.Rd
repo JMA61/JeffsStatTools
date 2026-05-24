@@ -22,13 +22,13 @@ FALSE otherwise.
 \description{
 Returns TRUE only when the user has explicitly signalled that a variable
 should be treated as categorical. This helper answers the question
-"should this variable be behaviourally treated as categorical?" — for
+"should this variable be behaviorally treated as categorical?" — for
 decisions like factoring in regression, expanding to dummies, or
 excluding from a correlation matrix.
 }
 \details{
 Paired with \code{.jst_is_discrete_integer()} (the structural helper).
-Callers needing behavioural decisions use this helper; callers needing
+Callers needing behavioral decisions use this helper; callers needing
 a warning trigger typically check this helper first, and fall back to
 the structural helper only if this one returns FALSE.
 

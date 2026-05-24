@@ -141,7 +141,7 @@ df <- jdeclare_udm(df, gearR, codes = c(Refused = -99))
 
 The \code{jrecode()} call assigns the numeric sentinel \code{-99}; the
 subsequent \code{jdeclare_udm()} call attaches the label and flags
-\code{-99} as missing. Labelling \code{-99} inside the \code{labels}
+\code{-99} as missing. Labeling \code{-99} inside the \code{labels}
 argument is unnecessary --- \code{jdeclare_udm()} owns that label.
 
 Under \strong{Stata convention}, UDMs are typed missing cells marked
@@ -156,7 +156,7 @@ df$gearR <- jrecode(df, gear,
 
 Under Stata convention, \code{jdeclare_udm()} is not needed for this
 pattern --- \code{jrecode()} handles both the value recoding and the
-Stata-style missing-value labelling in one call.
+Stata-style missing-value labeling in one call.
 
 Writing Stata-style missing-value tokens while the active convention is SPSS raises an
 informative error that echoes the user's call rewritten in SPSS-style

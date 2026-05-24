@@ -2,7 +2,7 @@
 % Please edit documentation in R/7036Tools.R
 \name{jlm}
 \alias{jlm}
-\title{SPSS-like linear regression output with standardised coefficients}
+\title{SPSS-like linear regression output with standardized coefficients}
 \usage{
 jlm(
   formula,
@@ -81,8 +81,8 @@ variables in the model.}
 }
 \description{
 Fits a linear model using \code{stats::lm()} and prints SPSS-style output,
-including unstandardised coefficients, standard errors, t values, p values,
-and standardised coefficients (β). Standardised coefficients are left
+including unstandardized coefficients, standard errors, t values, p values,
+and standardized coefficients (β). Standardized coefficients are left
 blank for the intercept and for dummy-coded categorical terms.
 }
 \details{

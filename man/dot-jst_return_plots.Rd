@@ -2,7 +2,7 @@
 % Please edit documentation in R/7036Tools.R
 \name{.jst_return_plots}
 \alias{.jst_return_plots}
-\title{Internal helper: standardise the return value of jplot dispatch methods}
+\title{Internal helper: standardize the return value of jplot dispatch methods}
 \usage{
 .jst_return_plots(plots)
 }

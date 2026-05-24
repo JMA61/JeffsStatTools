@@ -4,7 +4,7 @@
 #' JeffsStatTools simplifies R for users who need to do social science
 #' analyses without being required to become experienced computer
 #' programmers first. The package provides consistent syntax, sensible
-#' defaults, and protection from confusing base R behaviours, while
+#' defaults, and protection from confusing base R behaviors, while
 #' staying close enough to base R conventions that users learn
 #' transferable skills rather than a private dialect. Output is styled
 #' after the best conventions from alternative applications such as
@@ -37,7 +37,7 @@
 #'   \item \code{\link{jscreen}} — data screening for outliers, ranges, and skew
 #' }
 #'
-#' \strong{Group comparisons and modelling}
+#' \strong{Group comparisons and modeling}
 #' \itemize{
 #'   \item \code{\link{jt}} — independent or paired t-test
 #'   \item \code{\link{jaov}} — one-way analysis of variance with optional post-hoc tests
@@ -83,7 +83,7 @@
 #' by typing \code{j} and pressing Tab. Internal helpers begin with a
 #' dot or \code{.jst_} and are not intended for direct use.
 #'
-#' \strong{Formula vs data-first.} Group-comparison and modelling
+#' \strong{Formula vs data-first.} Group-comparison and modeling
 #' functions follow the base R formula interface:
 #' \code{jt(MathScore ~ Gender, data = SampleData)}. Descriptive and
 #' data-management functions take the data frame first, followed by
@@ -103,7 +103,7 @@
 #' \code{jdummy()} modify session state that subsequent analysis calls
 #' read automatically. State is explicit — calls can be inspected,
 #' inactivated, and cleared, and active state is reported in analysis
-#' output, so a script's behaviour stays visible and reproducible
+#' output, so a script's behavior stays visible and reproducible
 #' rather than depending on hidden context.
 #'
 #' \strong{Output verbosity.} \code{joutput()} sets one of three
@@ -115,7 +115,7 @@
 #' table follows an auto-suppress rule at the standard tier: it
 #' prints when something happened (pipeline state, listwise drops,
 #' or a per-variable discrepancy notification) and stays silent
-#' otherwise. See \code{?joutput} for the full toggle behaviour.
+#' otherwise. See \code{?joutput} for the full toggle behavior.
 #'
 #' @section Where to go next:
 #' \itemize{
@@ -164,11 +164,11 @@
   cat(paste0("\033[31m", x, "\033[0m"))
 }
 
-#' Internal helper: print text in yellow ANSI colour
+#' Internal helper: print text in yellow ANSI color
 #'
 #' Used for informational/status notes where the text should be visually
 #' distinct from regular output but not alarming (matches the "warning/note"
-#' colour convention).
+#' color convention).
 #'
 #' @keywords internal
 .cat_yellow <- function(x) {
@@ -179,7 +179,7 @@
 #'
 #' Used by every analysis function immediately after its red title line.
 #' Groups the default-data-frame note with other session-state notes (jsubset,
-#' jcomplete) under a consistent yellow colouring.
+#' jcomplete) under a consistent yellow coloring.
 #'
 #' @param data_name Character string name of the default data frame.
 #' @param extra_newline Logical. If TRUE (default), adds a trailing blank
@@ -860,7 +860,7 @@
   }
 
   # Replace variable in formula with dummy names. Wrapping in parentheses
-  # ensures correct behaviour when the variable appears inside an
+  # ensures correct behavior when the variable appears inside an
   # interaction term (e.g. y ~ x * Religion).
   dummy_plus  <- paste0("(", paste(reg$dummy_names, collapse = " + "), ")")
   formula_str <- gsub(paste0("\\b", reg$var_name, "\\b"),
@@ -964,7 +964,21 @@
     }
   )
   mask[is.na(mask)] <- FALSE
-  data[mask, , drop = FALSE]
+  out <- data[mask, , drop = FALSE]
+
+  # `[.data.frame` row subsetting drops the variable-label attribute from plain
+  # atomic and factor columns (haven_labelled columns keep theirs via their own
+  # `[` method). Restore each surviving column's label from the pre-subset data
+  # so variable labels survive row filtering in the functions that read the
+  # label from the filtered frame (jfreq, jt, jaov, jcrosstab, jcorr). jdesc
+  # captures labels before filtering and is unaffected either way.
+  for (nm in names(out)) {
+    lab <- attr(data[[nm]], "label", exact = TRUE)
+    if (!is.null(lab) && is.null(attr(out[[nm]], "label", exact = TRUE))) {
+      attr(out[[nm]], "label") <- lab
+    }
+  }
+  out
 }
 
 #' Internal helper: apply the full data pipeline and return filtered data + messages
@@ -983,7 +997,7 @@
 #' until explicitly turned off via jsubset(off) / jcomplete(off).
 #'
 #' When the current dataset has no jsubset / jcomplete set but at least one
-#' other dataset does have an active setting, a yellow-coloured note is
+#' other dataset does have an active setting, a yellow-colored note is
 #' included in the pipeline messages to remind the user that case selection
 #' is not active for this particular dataset.
 #'
@@ -1156,7 +1170,7 @@
   }
 }
 
-#' Internal helper: build standardised sample_info block
+#' Internal helper: build standardized sample_info block
 #'
 #' Combines pipeline counts from .jst_apply_pipeline() with analysis-level
 #' missing data information to produce the sample_info element included in
@@ -1223,17 +1237,17 @@
 #           the .jst_udm_notice_shown option)
 .jst_output_defaults <- list(
   minimal  = list(effect.size = FALSE, ci = FALSE, levene = FALSE,
-                  posthoc = FALSE, missing = FALSE, diagnostics = FALSE,
+                  posthoc = FALSE, diagnostics = FALSE,
                   case.processing = FALSE, case.processing.detail = "none",
                   var.labels = FALSE, ref.categories = FALSE,
                   udm.notice = FALSE),
   standard = list(effect.size = TRUE,  ci = TRUE,  levene = FALSE,
-                  posthoc = FALSE, missing = FALSE, diagnostics = FALSE,
+                  posthoc = FALSE, diagnostics = FALSE,
                   case.processing = NULL,  case.processing.detail = "totals",
                   var.labels = TRUE,  ref.categories = TRUE,
                   udm.notice = NULL),
   full     = list(effect.size = TRUE,  ci = TRUE,  levene = TRUE,
-                  posthoc = TRUE,  missing = TRUE,  diagnostics = TRUE,
+                  posthoc = TRUE,  diagnostics = TRUE,
                   case.processing = TRUE,  case.processing.detail = "per_code",
                   var.labels = TRUE,  ref.categories = TRUE,
                   udm.notice = TRUE)
@@ -1849,24 +1863,6 @@
   invisible(NULL)
 }
 
-#' Internal helper: print per-variable missing data breakdown
-#'
-#' Prints a detail line showing how many missing values each analysis variable
-#' contributed. Only called when the missing toggle is active and there are
-#' missing values.
-#'
-#' @param missing_by_var Named integer vector from sample_info$missing_by_var.
-#'
-#' @keywords internal
-.jst_print_missing_detail <- function(missing_by_var) {
-  has_missing <- missing_by_var[missing_by_var > 0]
-  if (length(has_missing) > 0) {
-    detail <- paste0(names(has_missing), " (", has_missing, ")",
-                     collapse = ", ")
-    cat("  Missing by variable: ", detail, "\n\n", sep = "")
-  }
-}
-
 #' Internal helper: check that variable names exist in a data frame
 #'
 #' Produces clear error messages for several common user mistakes:
@@ -2256,8 +2252,8 @@
 # .jst_label_system_missing
 # Display label used in output tables for the system-missing row (R's
 # plain NA, distinct from declared UDMs). "System/NA" reads in two
-# audiences at once: SPSS/Stata users recognise "System" as the platform
-# term for system-missing, and R users recognise "NA" as the in-language
+# audiences at once: SPSS/Stata users recognize "System" as the platform
+# term for system-missing, and R users recognize "NA" as the in-language
 # token for the same thing. Referenced wherever a per-row missing label
 # is rendered (jfreq's Missing section in v0.9.6; CP table missing rows
 # when the UDM-content work lands; future jscreen tweaks if its format
@@ -2468,7 +2464,7 @@
 #   .jst_is_categorical()      — intent helper. TRUE only when the user has
 #                                declared categorical (jdummy registration,
 #                                or class factor/logical/character). Drives
-#                                behavioural decisions in jlm and jlogistic.
+#                                behavioral decisions in jlm and jlogistic.
 #   .jst_is_discrete_integer() — structural helper. TRUE for variables that
 #                                *look* categorical (haven-labelled with
 #                                labels in data and <= 6 distinct values, or
@@ -2486,12 +2482,12 @@
 #'
 #' Returns TRUE only when the user has explicitly signalled that a variable
 #' should be treated as categorical. This helper answers the question
-#' "should this variable be behaviourally treated as categorical?" — for
+#' "should this variable be behaviorally treated as categorical?" — for
 #' decisions like factoring in regression, expanding to dummies, or
 #' excluding from a correlation matrix.
 #'
 #' Paired with \code{.jst_is_discrete_integer()} (the structural helper).
-#' Callers needing behavioural decisions use this helper; callers needing
+#' Callers needing behavioral decisions use this helper; callers needing
 #' a warning trigger typically check this helper first, and fall back to
 #' the structural helper only if this one returns FALSE.
 #'
@@ -2547,7 +2543,7 @@
 #' Used primarily as a *warning trigger*: callers that want to alert users
 #' to "this looks like it should probably have been jdummy-registered or
 #' passed via categorical=" check this helper. It does NOT license
-#' behavioural changes — analysis functions should only factor variables
+#' behavioral changes — analysis functions should only factor variables
 #' based on the intent helper, not this one.
 #'
 #' Two structural rules, checked in order. First match wins.
@@ -2669,54 +2665,40 @@
   no  <- function(msg) list(summarisable = FALSE, num = NULL, note = NULL, refusal = msg)
   yes <- function(num, note = NULL) list(summarisable = TRUE, num = num, note = note, refusal = NULL)
 
-  # Date/time types: not supported here (a dedicated function handles these).
-  if (inherits(x, c("Date", "POSIXct", "POSIXlt", "difftime"))) {
-    return(no(paste0("'", var_name, "' is a date/time variable; jdesc() does ",
-                     "not summarize dates or times.")))
-  }
+  # Type rules live in the shared detector so jdesc and the analysis type
+  # gate cannot drift; this wrapper only maps the kind to jdesc's answer and
+  # owns jdesc's refusal wording / numbers-as-text note.
+  k <- .jst_var_kind(x)
 
-  # haven-labelled (numeric underlying): coerce and summarize.
-  if (haven::is.labelled(x)) {
-    return(yes(as.numeric(x)))
-  }
+  switch(k$kind,
+    # Numeric-ish kinds: summarize on the coerced numeric.
+    numeric        = ,
+    labelled       = ,
+    logical        = ,
+    numeric_factor = yes(k$num),
 
-  # Logical: summarize as 0/1 (Mean = proportion TRUE), like a 0/1 dichotomy.
-  if (is.logical(x)) {
-    return(yes(as.numeric(x)))
-  }
-
-  # Factor: numeric-coded levels summarize; text levels refuse.
-  if (is.factor(x)) {
-    num <- suppressWarnings(as.numeric(as.character(x)))
-    if (all(is.na(num[!is.na(x)]))) {
-      return(no(paste0("'", var_name, "' is a factor with text categories and ",
-                       "cannot be summarized with descriptive statistics. Use ",
-                       "jfreq() instead for categorical variables.")))
-    }
-    return(yes(num))
-  }
-
-  # Character: numeric-looking text summarizes (with a note); true text refuses.
-  if (is.character(x)) {
-    num <- suppressWarnings(as.numeric(x))
-    if (all(is.na(num[!is.na(x)]))) {
-      return(no(paste0("'", var_name, "' is a character (text) variable and ",
-                       "cannot be summarized with descriptive statistics. Use ",
-                       "jfreq() instead for categorical variables.")))
-    }
-    return(yes(num, note = paste0("'", var_name, "' is stored as text but ",
+    # Numbers stored as text: summarize, but flag it.
+    numeric_text   = yes(k$num, note = paste0("'", var_name, "' is stored as text but ",
                                   "contains numeric values; summarizing it ",
-                                  "numerically.")))
-  }
+                                  "numerically.")),
 
-  # Plain numeric (integer / double).
-  if (is.numeric(x)) {
-    return(yes(as.numeric(x)))
-  }
+    # Date/time types: not supported here (a dedicated function handles these).
+    datetime       = no(paste0("'", var_name, "' is a date/time variable; jdesc() does ",
+                               "not summarize dates or times.")),
 
-  # Anything else (list, complex, raw, ...): refuse with a generic message.
-  no(paste0("'", var_name, "' is of type ", typeof(x), " and cannot be ",
-            "summarized with descriptive statistics."))
+    # Text factor / text character: refuse and redirect to jfreq().
+    text_factor    = no(paste0("'", var_name, "' is a factor with text categories and ",
+                               "cannot be summarized with descriptive statistics. Use ",
+                               "jfreq() instead for categorical variables.")),
+    text_character = no(paste0("'", var_name, "' is a character (text) variable and ",
+                               "cannot be summarized with descriptive statistics. Use ",
+                               "jfreq() instead for categorical variables.")),
+
+    # complex / raw / list / other: refuse with a generic message. Keyed off
+    # typeof(x) (not k$kind) so e.g. a closure column still reports "closure".
+    no(paste0("'", var_name, "' is of type ", typeof(x), " and cannot be ",
+              "summarized with descriptive statistics."))
+  )
 }
 
 #' Internal helper: classify a variable's analysis-relevant type "kind"
@@ -2727,8 +2709,8 @@
 #' "labelled", "logical", "numeric_factor", "numeric_text" (numbers stored
 #' as text), "text_factor", "text_character", "datetime"
 #' (Date/POSIXct/POSIXlt/difftime), "complex", "raw", "list", "other".
-#' (\code{.jst_classify_desc_var()} makes the same distinctions for jdesc;
-#' the two are candidates to share this detector in a later tidy-up.)
+#' (\code{.jst_classify_desc_var()} delegates to this detector for jdesc, so
+#' the variable-type rules live here only and the two cannot drift.)
 #'
 #' @param x A variable / data-frame column.
 #' @return A list with \code{kind} (character) and \code{num} (numeric
@@ -3011,7 +2993,7 @@
                  else_tag = NULL, else_explicit = FALSE)
 
   # Helper: parse an RHS token. Returns list(new_val = numeric,
-  # tagged = NULL | letter) or NULL if the token is not recognised
+  # tagged = NULL | letter) or NULL if the token is not recognized
   # (caller then falls through to the existing numeric-error path).
   parse_rhs_token <- function(rhs_str, rule_str) {
     rhs_lower <- tolower(trimws(rhs_str))
@@ -4336,8 +4318,8 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 #'       Includes Case Processing Summary, variable labels, reference
 #'       categories, effect sizes, and confidence intervals.}
 #'     \item{full}{Everything in standard plus assumption checks
-#'       (Levene's test), post-hoc tests, diagnostics, and per-variable
-#'       missing data detail.}
+#'       (Levene's test), post-hoc tests, regression diagnostics, and the
+#'       most detailed Case Processing Summary (per-code missing breakdown).}
 #'   }
 #' @param effect.size Logical or NULL. Override the level's default for
 #'   effect size display.
@@ -4347,8 +4329,6 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 #'   Levene's test display.
 #' @param posthoc Logical or NULL. Override the level's default for
 #'   post-hoc test display (jaov only).
-#' @param missing Logical or NULL. Override the level's default for
-#'   per-variable missing data detail.
 #' @param diagnostics Logical or NULL. Override the level's default for
 #'   regression diagnostic output (jlm only).
 #' @param case.processing Three-state toggle. \code{TRUE} forces the
@@ -4398,7 +4378,7 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 #'   level/toggle change silently (the status panel is not printed). A bare
 #'   joutput() status query always prints regardless of echo.
 joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
-                    posthoc = NULL, missing = NULL, diagnostics = NULL,
+                    posthoc = NULL, diagnostics = NULL,
                     case.processing = NULL, case.processing.detail = NULL,
                     var.labels = NULL,
                     ref.categories = NULL, udm.notice = NULL, echo = TRUE) {
@@ -4422,7 +4402,6 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
   if (!is.null(ci))              toggle_args$ci              <- ci
   if (!is.null(levene))          toggle_args$levene          <- levene
   if (!is.null(posthoc))         toggle_args$posthoc         <- posthoc
-  if (!is.null(missing))         toggle_args$missing         <- missing
   if (!is.null(diagnostics))     toggle_args$diagnostics     <- diagnostics
   if (!is.null(case.processing)) toggle_args$case.processing <- case.processing
   if (!is.null(case.processing.detail)) {
@@ -4483,7 +4462,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
   cat("Level: ", level, "\n", sep = "")
 
   # Show effective value for each toggle
-  toggle_names <- c("effect.size", "ci", "levene", "posthoc", "missing", "diagnostics",
+  toggle_names <- c("effect.size", "ci", "levene", "posthoc", "diagnostics",
                     "case.processing", "case.processing.detail",
                     "var.labels", "ref.categories", "udm.notice")
   defaults     <- .jst_output_defaults[[level]]
@@ -4713,7 +4692,7 @@ joptions <- function(missing.convention = NULL, udm.convention.codes = NULL,
   # argument, unnamed in the source call, and NULL in value.
   call_args <- as.list(sys.call())[-1L]
   # Ignore a named echo = ... when detecting the reset shape, so
-  # joptions(NULL, echo = FALSE) is still recognised as a (quiet) reset
+  # joptions(NULL, echo = FALSE) is still recognized as a (quiet) reset
   # rather than read as two arguments.
   arg_names <- names(call_args)
   if (!is.null(arg_names)) call_args <- call_args[arg_names != "echo"]
@@ -7578,11 +7557,11 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, labels = NULL,
 
 # -- jlm ----------------------------------------------------------------------
 
-#' SPSS-like linear regression output with standardised coefficients
+#' SPSS-like linear regression output with standardized coefficients
 #'
 #' Fits a linear model using \code{stats::lm()} and prints SPSS-style output,
-#' including unstandardised coefficients, standard errors, t values, p values,
-#' and standardised coefficients (β). Standardised coefficients are left
+#' including unstandardized coefficients, standard errors, t values, p values,
+#' and standardized coefficients (β). Standardized coefficients are left
 #' blank for the intercept and for dummy-coded categorical terms.
 #'
 #' Also prints key model summary information (R-squared, adjusted R-squared,
@@ -9956,7 +9935,7 @@ jrelabel <- function(data, var, labels = NULL, var.label = NULL) {
 #   standard - full block with the rewritten jrecode and jdeclare_udm
 #   full       lines, plus the joptions switch line at the end.
 #
-# Cap behaviour: when tagged-NA token count exceeds the convention
+# Cap behavior: when tagged-NA token count exceeds the convention
 # code count, the helper substitutes the mappable subset and leaves
 # unmapped tokens in their original .x form. A plain-language cap
 # note explaining the situation is appended between the example
@@ -10165,7 +10144,7 @@ jrelabel <- function(data, var, labels = NULL, var.label = NULL) {
 #   standard - full block with the rewritten jdeclare_udm call and
 #   full       the joptions switch line.
 #
-# Cap behaviour: when tagged-NA token count exceeds the convention
+# Cap behavior: when tagged-NA token count exceeds the convention
 # code count, the helper substitutes the mappable subset and leaves
 # unmapped tokens out of the example call. A plain-language cap note
 # is appended.
@@ -10379,7 +10358,7 @@ jrelabel <- function(data, var, labels = NULL, var.label = NULL) {
   msg_parts <- c(
     paste0("codes for ", var_name, " mixes Stata-style missing values ",
            "and SPSS-style numeric codes."),
-    "The two operations are different -- labelling existing Stata-style",
+    "The two operations are different -- labeling existing Stata-style",
     "missing-value cells (tagged input) and converting numeric cells to",
     "Stata-style missing values (numeric input) -- and must be issued as",
     "separate calls.",
@@ -10429,7 +10408,7 @@ jrelabel <- function(data, var, labels = NULL, var.label = NULL) {
   }
   paste0("Note: jdeclare_udm replaced the existing UDM set for ", var_name,
          ". Previously declared codes dropped: ", paste(parts, collapse = ", "),
-         ". Use `?jdeclare_udm` to review the replace-semantics behaviour.")
+         ". Use `?jdeclare_udm` to review the replace-semantics behavior.")
 }
 
 
@@ -10568,7 +10547,7 @@ jrelabel <- function(data, var, labels = NULL, var.label = NULL) {
 #'
 #' The \code{jrecode()} call assigns the numeric sentinel \code{-99}; the
 #' subsequent \code{jdeclare_udm()} call attaches the label and flags
-#' \code{-99} as missing. Labelling \code{-99} inside the \code{labels}
+#' \code{-99} as missing. Labeling \code{-99} inside the \code{labels}
 #' argument is unnecessary --- \code{jdeclare_udm()} owns that label.
 #'
 #' Under \strong{Stata convention}, UDMs are typed missing cells marked
@@ -10583,7 +10562,7 @@ jrelabel <- function(data, var, labels = NULL, var.label = NULL) {
 #'
 #' Under Stata convention, \code{jdeclare_udm()} is not needed for this
 #' pattern --- \code{jrecode()} handles both the value recoding and the
-#' Stata-style missing-value labelling in one call.
+#' Stata-style missing-value labeling in one call.
 #'
 #' Writing Stata-style missing-value tokens while the active convention is SPSS raises an
 #' informative error that echoes the user's call rewritten in SPSS-style
@@ -10999,7 +10978,7 @@ jrecode <- function(data, orig.var, map, labels = NULL, convention = NULL) {
 #'   \code{joptions("missing.convention")}, then from the SPSS-form
 #'   default.
 #' @param udm.notice Logical. When \code{TRUE} (the default), the
-#'   function prints a notification summarising what was declared.
+#'   function prints a notification summarizing what was declared.
 #'   Set \code{FALSE} to suppress.
 #'
 #' @return The data frame, with the specified variable updated to
@@ -11130,7 +11109,7 @@ jdeclare_udm <- function(data, var, codes, labels = NULL,
   }
 
   if (has_all_names && !is.null(labels)) {
-    stop("jdeclare_udm(): pick one labelling form. Either name every ",
+    stop("jdeclare_udm(): pick one labeling form. Either name every ",
          "element of `codes` (Option C) OR supply `labels = ...` ",
          "separately (Option A), not both.",
          call. = FALSE)
@@ -11277,7 +11256,7 @@ jdeclare_udm <- function(data, var, codes, labels = NULL,
     branch  <- "spss_canonical"
 
   } else if (has_tagged) {
-    # ---------- Branch D3: Stata canonical (tagged-NA labelling) -----------
+    # ---------- Branch D3: Stata canonical (tagged-NA labeling) -----------
     new_col <- .jst_jdeclare_udm_stata_label(col, parsed_codes)
     branch  <- "stata_canonical"
 
@@ -11681,7 +11660,7 @@ jdeclare_udm <- function(data, var, codes, labels = NULL,
 #' (\code{tagged_na} on \code{haven_labelled}), and base R (declarations
 #' stripped, declared cells converted to plain \code{NA}). Replaces
 #' \code{jstrip_udm()} (retired in v0.9.5); the base R target is the strip
-#' behaviour.
+#' behavior.
 #'
 #' @param data A data frame, or omitted to use the \code{juse()} default.
 #' @param to One of \code{"baseR"}, \code{"spss"}, or \code{"stata"}
@@ -11699,11 +11678,11 @@ jdeclare_udm <- function(data, var, codes, labels = NULL,
 #'   \code{...} and \code{vars} are empty, \code{jconvert()} operates on
 #'   the whole data frame.
 #' @param udm.notice Logical; \code{TRUE} (default) prints a notification
-#'   summarising what was converted (and what was skipped) along with an
+#'   summarizing what was converted (and what was skipped) along with an
 #'   assignment-syntax reminder. \code{FALSE} suppresses the message.
 #'   Always-on by default; does not consult \code{joutput()} because the
 #'   function reports an action it just performed rather than explaining
-#'   system behaviour.
+#'   system behavior.
 #'
 #' @return The data frame with the requested conversions applied, returned
 #'   invisibly. As with \code{jrelabel()} and \code{jrecode()}, the user
@@ -11718,7 +11697,7 @@ jdeclare_udm <- function(data, var, codes, labels = NULL,
 #'     \code{haven_labelled_spss}), masks declared codes to \code{NA} and
 #'     removes the attributes; value labels are preserved so the column
 #'     can still round-trip through \code{jsave()} with original
-#'     labelling. For columns carrying Stata-style missing values
+#'     labeling. For columns carrying Stata-style missing values
 #'     (\code{tagged_na} markers), uses \code{haven::zap_missing()} to
 #'     convert them to plain \code{NA}s.}
 #'   \item{\code{to = "spss"}}{Convert Stata-style or SAS-style missing
@@ -12555,14 +12534,14 @@ jconvert <- function(data, to = NULL, ..., vars = NULL, udm.notice = TRUE) {
 #'   with metadata attached so the package's analysis functions still treat
 #'   them as missing. If \code{FALSE}, UDM codes are converted to plain
 #'   \code{NA} on import and the metadata is stripped (matching haven's
-#'   default \code{user_na = FALSE} behaviour). Has no effect on non-SPSS
+#'   default \code{user_na = FALSE} behavior). Has no effect on non-SPSS
 #'   formats. Corresponds to haven's \code{user_na} argument with the same
 #'   semantics when set to \code{TRUE}.
 #' @param udm.notice Per-call override for the UDM notification frequency.
 #'   \code{NULL} (default) defers to the global setting from \code{joutput()}.
 #'   \code{TRUE} prints the notification on every load; \code{FALSE}
 #'   suppresses it; \code{NULL} at the global level shows once per session.
-#'   See \code{?joutput} for the full toggle behaviour.
+#'   See \code{?joutput} for the full toggle behavior.
 #'
 #' @return Invisibly returns the loaded data frame. The primary effect is
 #'   assigning the data frame in the calling environment.
@@ -14097,7 +14076,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' into one numbered error, so the user fixes everything and re-runs once
 #' rather than discovering the second problem only after fixing the first. A
 #' single firing is returned unchanged, so single-issue saves are byte-for-
-#' byte identical to the pre-accumulation behaviour.
+#' byte identical to the pre-accumulation behavior.
 #'
 #' @param sections List of pre-built section messages, one per fired check.
 #' @param data_name Character. The data frame's name, for the header.
@@ -14492,9 +14471,9 @@ jsave <- function(data, file, overwrite = FALSE) {
       #
       # >>> TRANSITION BLOCK — remove after 2026-06 course-end cleanup <<<
       # Backwards-compat: write to an existing Data/ or data/ folder if
-      # present (preserves prior behaviour for users with folders
+      # present (preserves prior behavior for users with folders
       # auto-created by earlier versions). No auto-create — the
-      # post-cleanup behaviour is "write to working directory" and we
+      # post-cleanup behavior is "write to working directory" and we
       # apply that whenever the legacy folders don't exist.
       if (dir.exists("Data")) {
         out_path <- file.path("Data", file)
@@ -14779,7 +14758,7 @@ jsave <- function(data, file, overwrite = FALSE) {
 #'   \code{jst_lm} \code{fit} plots (result-object form).
 #' @param r2 Logical. If TRUE (default), displays R-squared in the subtitle
 #'   alongside the equation.
-#' @param by Unquoted variable name for group-colouring (data-first form).
+#' @param by Unquoted variable name for group-coloring (data-first form).
 #' @param type Character. Plot type override for the data-first form. One
 #'   of \code{histogram}, \code{bar}, \code{scatter}, \code{box},
 #'   \code{grouped_bar}. If NULL (default), auto-detected from variable
@@ -15764,7 +15743,7 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
 #' \code{all} (resolved against the supplied \code{core} and
 #' \code{all_plots} vectors) or an explicit character vector of plot
 #' names. Errors with a clear message listing the valid options if any
-#' name in \code{which} isn't recognised.
+#' name in \code{which} isn't recognized.
 #'
 #' @param which The user's \code{which} argument: \code{core},
 #'   \code{all}, or a character vector of plot names.
@@ -15794,7 +15773,7 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
   which
 }
 
-#' Internal helper: standardise the return value of jplot dispatch methods
+#' Internal helper: standardize the return value of jplot dispatch methods
 #'
 #' Strips \code{NULL} entries from a list of ggplot objects, then
 #' returns the list invisibly — or, if exactly one plot remains,
@@ -15898,7 +15877,7 @@ jplot.default <- function(x, ..., by = NULL, type = NULL,
 #' @param dv_name Character. The dependent variable name used at the
 #'   left-hand side of the equation.
 #' @param max_terms Integer. Maximum number of predictor terms to
-#'   include. Default 3; additional terms are summarised as
+#'   include. Default 3; additional terms are summarized as
 #'   \code{...}.
 #'
 #' @return A character string of the formatted equation.

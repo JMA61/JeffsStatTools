@@ -10,7 +10,6 @@ joutput(
   ci = NULL,
   levene = NULL,
   posthoc = NULL,
-  missing = NULL,
   diagnostics = NULL,
   case.processing = NULL,
   case.processing.detail = NULL,
@@ -32,8 +31,8 @@ reference categories, no effect sizes, no CIs.}
 Includes Case Processing Summary, variable labels, reference
 categories, effect sizes, and confidence intervals.}
 \item{full}{Everything in standard plus assumption checks
-(Levene's test), post-hoc tests, diagnostics, and per-variable
-missing data detail.}
+(Levene's test), post-hoc tests, regression diagnostics, and the
+most detailed Case Processing Summary (per-code missing breakdown).}
 }}
 
 \item{effect.size}{Logical or NULL. Override the level's default for
@@ -47,9 +46,6 @@ Levene's test display.}
 
 \item{posthoc}{Logical or NULL. Override the level's default for
 post-hoc test display (jaov only).}
-
-\item{missing}{Logical or NULL. Override the level's default for
-per-variable missing data detail.}
 
 \item{diagnostics}{Logical or NULL. Override the level's default for
 regression diagnostic output (jlm only).}

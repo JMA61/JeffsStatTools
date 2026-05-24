@@ -14,7 +14,7 @@
 left-hand side of the equation.}
 
 \item{max_terms}{Integer. Maximum number of predictor terms to
-include. Default 3; additional terms are summarised as
+include. Default 3; additional terms are summarized as
 \code{...}.}
 }
 \value{

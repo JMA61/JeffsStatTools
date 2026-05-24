@@ -27,11 +27,11 @@ variable names. Mutually exclusive with \code{...}. When both
 the whole data frame.}
 
 \item{udm.notice}{Logical; \code{TRUE} (default) prints a notification
-summarising what was converted (and what was skipped) along with an
+summarizing what was converted (and what was skipped) along with an
 assignment-syntax reminder. \code{FALSE} suppresses the message.
 Always-on by default; does not consult \code{joutput()} because the
 function reports an action it just performed rather than explaining
-system behaviour.}
+system behavior.}
 }
 \value{
 The data frame with the requested conversions applied, returned
@@ -46,7 +46,7 @@ frame already in memory. Three target formats are supported: SPSS-style
 (\code{tagged_na} on \code{haven_labelled}), and base R (declarations
 stripped, declared cells converted to plain \code{NA}). Replaces
 \code{jstrip_udm()} (retired in v0.9.5); the base R target is the strip
-behaviour.
+behavior.
 }
 \details{
 The three target formats:
@@ -57,7 +57,7 @@ declared cells to plain \code{NA}. For SPSS-form columns
 \code{haven_labelled_spss}), masks declared codes to \code{NA} and
 removes the attributes; value labels are preserved so the column
 can still round-trip through \code{jsave()} with original
-labelling. For columns carrying Stata-style missing values
+labeling. For columns carrying Stata-style missing values
 (\code{tagged_na} markers), uses \code{haven::zap_missing()} to
 convert them to plain \code{NA}s.}
 \item{\code{to = "spss"}}{Convert Stata-style or SAS-style missing

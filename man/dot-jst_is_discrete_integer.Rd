@@ -32,7 +32,7 @@ not the user's intent.
 Used primarily as a \emph{warning trigger}: callers that want to alert users
 to "this looks like it should probably have been jdummy-registered or
 passed via categorical=" check this helper. It does NOT license
-behavioural changes — analysis functions should only factor variables
+behavioral changes — analysis functions should only factor variables
 based on the intent helper, not this one.
 
 Two structural rules, checked in order. First match wins.

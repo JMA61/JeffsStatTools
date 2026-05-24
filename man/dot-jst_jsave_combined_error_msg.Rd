@@ -25,6 +25,6 @@ built and tier-formatted by its own \code{.jst_jsave_*_error_msg()} helper)
 into one numbered error, so the user fixes everything and re-runs once
 rather than discovering the second problem only after fixing the first. A
 single firing is returned unchanged, so single-issue saves are byte-for-
-byte identical to the pre-accumulation behaviour.
+byte identical to the pre-accumulation behavior.
 }
 \keyword{internal}

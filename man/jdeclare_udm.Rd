@@ -46,7 +46,7 @@ column's existing UDM declaration (if any), then from
 default.}
 
 \item{udm.notice}{Logical. When \code{TRUE} (the default), the
-function prints a notification summarising what was declared.
+function prints a notification summarizing what was declared.
 Set \code{FALSE} to suppress.}
 }
 \value{

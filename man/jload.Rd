@@ -49,7 +49,7 @@ a message lists the available sheets.}
 with metadata attached so the package's analysis functions still treat
 them as missing. If \code{FALSE}, UDM codes are converted to plain
 \code{NA} on import and the metadata is stripped (matching haven's
-default \code{user_na = FALSE} behaviour). Has no effect on non-SPSS
+default \code{user_na = FALSE} behavior). Has no effect on non-SPSS
 formats. Corresponds to haven's \code{user_na} argument with the same
 semantics when set to \code{TRUE}.}
 
@@ -57,7 +57,7 @@ semantics when set to \code{TRUE}.}
 \code{NULL} (default) defers to the global setting from \code{joutput()}.
 \code{TRUE} prints the notification on every load; \code{FALSE}
 suppresses it; \code{NULL} at the global level shows once per session.
-See \code{?joutput} for the full toggle behaviour.}
+See \code{?joutput} for the full toggle behavior.}
 
 \item{quiet}{Logical; default FALSE. When TRUE, suppresses jload()'s
 informational messages (file found, load summary, default-data note,

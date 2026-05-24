@@ -9,7 +9,7 @@
 JeffsStatTools simplifies R for users who need to do social science
 analyses without being required to become experienced computer
 programmers first. The package provides consistent syntax, sensible
-defaults, and protection from confusing base R behaviours, while
+defaults, and protection from confusing base R behaviors, while
 staying close enough to base R conventions that users learn
 transferable skills rather than a private dialect. Output is styled
 after the best conventions from alternative applications such as
@@ -45,7 +45,7 @@ instructors. Feedback from this group shapes ongoing refinements.
 \item \code{\link{jscreen}} — data screening for outliers, ranges, and skew
 }
 
-\strong{Group comparisons and modelling}
+\strong{Group comparisons and modeling}
 \itemize{
 \item \code{\link{jt}} — independent or paired t-test
 \item \code{\link{jaov}} — one-way analysis of variance with optional post-hoc tests
@@ -93,7 +93,7 @@ For the full alphabetical listing of every exported function, run
 by typing \code{j} and pressing Tab. Internal helpers begin with a
 dot or \code{.jst_} and are not intended for direct use.
 
-\strong{Formula vs data-first.} Group-comparison and modelling
+\strong{Formula vs data-first.} Group-comparison and modeling
 functions follow the base R formula interface:
 \code{jt(MathScore ~ Gender, data = SampleData)}. Descriptive and
 data-management functions take the data frame first, followed by
@@ -113,7 +113,7 @@ filter on the current default without further specification.
 \code{jdummy()} modify session state that subsequent analysis calls
 read automatically. State is explicit — calls can be inspected,
 inactivated, and cleared, and active state is reported in analysis
-output, so a script's behaviour stays visible and reproducible
+output, so a script's behavior stays visible and reproducible
 rather than depending on hidden context.
 
 \strong{Output verbosity.} \code{joutput()} sets one of three
@@ -125,7 +125,7 @@ override session-level settings. The Case Processing Summary
 table follows an auto-suppress rule at the standard tier: it
 prints when something happened (pipeline state, listwise drops,
 or a per-variable discrepancy notification) and stays silent
-otherwise. See \code{?joutput} for the full toggle behaviour.
+otherwise. See \code{?joutput} for the full toggle behavior.
 }
 
 \section{Where to go next}{

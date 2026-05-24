@@ -64,7 +64,7 @@ one or more specific plot names valid for the object's class.
 passed to class-specific methods; for the data-first form these are
 unquoted variable names (1 or 2).}
 
-\item{by}{Unquoted variable name for group-colouring (data-first form).}
+\item{by}{Unquoted variable name for group-coloring (data-first form).}
 
 \item{type}{Character. Plot type override for the data-first form. One
 of \code{histogram}, \code{bar}, \code{scatter}, \code{box},

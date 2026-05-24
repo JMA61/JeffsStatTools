@@ -20,7 +20,7 @@ numeric-ish kinds, the coerced numeric vector. Kinds: "numeric",
 "labelled", "logical", "numeric_factor", "numeric_text" (numbers stored
 as text), "text_factor", "text_character", "datetime"
 (Date/POSIXct/POSIXlt/difftime), "complex", "raw", "list", "other".
-(\code{.jst_classify_desc_var()} makes the same distinctions for jdesc;
-the two are candidates to share this detector in a later tidy-up.)
+(\code{.jst_classify_desc_var()} delegates to this detector for jdesc, so
+the variable-type rules live here only and the two cannot drift.)
 }
 \keyword{internal}
