@@ -4,12 +4,7 @@
 \alias{.jst_format_udm_narrative}
 \title{Internal: format the UDM narrative notification text}
 \usage{
-.jst_format_udm_narrative(
-  udm_info,
-  preserve.udm,
-  max_show = 10L,
-  data_name = "data"
-)
+.jst_format_udm_narrative(udm_info, preserve.udm, max_show = 10L)
 }
 \description{
 Builds the message string emitted when UDM-bearing variables are

@@ -182,12 +182,15 @@
 #' jcomplete) under a consistent yellow coloring.
 #'
 #' @param data_name Character string name of the default data frame.
-#' @param extra_newline Logical. If TRUE (default), adds a trailing blank
-#'   line after the note so it's visually separated from whatever prints
-#'   next. Set FALSE only when the caller wants the next line to abut
-#'   the note directly.
+#' @param extra_newline Logical. If FALSE (default), the note prints with no
+#'   trailing blank line: whatever follows supplies its own leading blank
+#'   (pipeline messages via \code{.jst_print_msgs}, or the Case Processing
+#'   table), so a trailing blank here would double it up. Set TRUE for the
+#'   callers that print the note immediately above a table or indented detail
+#'   block with no such following separator (jcomplete's filter summary,
+#'   jdummy's registration summaries).
 #' @keywords internal
-.jst_default_note <- function(data_name, extra_newline = TRUE) {
+.jst_default_note <- function(data_name, extra_newline = FALSE) {
   .cat_yellow(paste0("Using default data frame: ", data_name, "\n"))
   if (extra_newline) cat("\n")
 }
@@ -1169,6 +1172,8 @@
 #'
 #' @keywords internal
 .jst_print_msgs <- function(msgs) {
+  if (length(msgs) == 0L) return(invisible(NULL))
+  cat("\n")   # separate the message block from the note/title printed above
   for (m in msgs) {
     if (startsWith(m, "[YELLOW]")) {
       .cat_yellow(sub("^\\[YELLOW\\]", "", m))
@@ -1729,6 +1734,9 @@
 
   if (isTRUE(spec$render)) {
 
+    # Widest rendered table; the closing separator rule is sized to it.
+    block_width <- 0L
+
     # ---- TOP TABLE: pipeline chain ----
     if (isTRUE(spec$render_top)) {
       labels <- "Original"; surv_v <- n_original; exc_v <- NA_integer_
@@ -1778,28 +1786,29 @@
       surv_v <- c(surv_v, prior)
 
       # Column widths sized to content (display width) so long labels and
-      # the multibyte em-dash both align. Header is indented 2, data rows 4;
-      # both pad their label field to the same absolute end column.
+      # the multibyte em-dash both align. Title is flush left, data rows
+      # indented 4; both pad their label field to the same absolute end
+      # column, so the title outdents over the rows that nest under it.
       exc_strs  <- vapply(seq_along(labels), function(i)
                      if (is.na(exc_v[i])) dash else as.character(exc_v[i]),
                      character(1))
       surv_strs <- as.character(surv_v)
-      pct_strs  <- fmt1(surv_v / n_original * 100)
-      h_ind <- 2L; r_ind <- 4L
+      h_ind <- 0L; r_ind <- 4L
       lab_end <- max(h_ind + dw("Case Processing"), r_ind + max(dw(labels)))
-      exc_w  <- max(dw("Excluded"),    max(dw(exc_strs)))
-      surv_w <- max(dw("Surviving"),   max(dw(surv_strs)))
-      pct_w  <- max(dw("% Surviving"), max(dw(pct_strs)))
+      exc_w  <- max(dw("Excluded"),  max(dw(exc_strs)))
+      surv_w <- max(dw("Remaining"), max(dw(surv_strs)))
       g <- "  "
+      block_width <- max(block_width,
+                         lab_end + nchar(g) + exc_w + nchar(g) + surv_w)
 
       cat("\n")
       cat(strrep(" ", h_ind), padr("Case Processing", lab_end - h_ind), g,
-          padl("Excluded", exc_w), g, padl("Surviving", surv_w), g,
-          padl("% Surviving", pct_w), "\n", sep = "")
+          padl("Excluded", exc_w), g, padl("Remaining", surv_w),
+          "\n", sep = "")
       for (i in seq_along(labels)) {
         cat(strrep(" ", r_ind), padr(labels[i], lab_end - r_ind), g,
-            padl(exc_strs[i], exc_w), g, padl(surv_strs[i], surv_w), g,
-            padl(pct_strs[i], pct_w), "\n", sep = "")
+            padl(exc_strs[i], exc_w), g, padl(surv_strs[i], surv_w),
+            "\n", sep = "")
       }
     }
 
@@ -1831,38 +1840,63 @@
         all_srcp <- fmt1(all_src  / n_original * 100)
         all_plp  <- fmt1(all_pool / n_pool     * 100)
 
-        h_ind <- 2L; c_ind <- 6L
+        # Count columns: the value field is sized to the widest count in the
+        # column, then that block is centered under its (wider) "From X"
+        # header, so short counts sit inboard of the header rather than jammed
+        # against its right edge. Counts still right-justify within the block,
+        # so they stay aligned to each other down the column. Percent columns
+        # keep the narrow "%" header centered over right-justified values.
+        h_ind <- 0L; v_ind <- 4L; c_ind <- 6L
         lab_end <- max(h_ind + dw("Missing-data breakdown"),
                        c_ind + max(dw(all_lab)))
-        srcn_w  <- max(dw(src_hdr),  max(dw(all_src)))
+        vf_src  <- max(dw(all_src))
+        vf_pool <- max(dw(all_pool))
+        srcn_w  <- max(dw(src_hdr),  vf_src)
+        pooln_w <- max(dw(pool_hdr), vf_pool)
         pct_w   <- max(dw("%"), max(dw(all_srcp), dw(all_plp)))
-        pooln_w <- max(dw(pool_hdr), max(dw(all_pool)))
         g <- "  "
 
-        emit <- function(indent, lab, lab_w, c1, p1, c2, p2) {
+        ctr <- function(x, w) { x <- as.character(x); p <- max(0L, w - dw(x))
+          l <- p %/% 2L; paste0(strrep(" ", l), x, strrep(" ", p - l)) }
+        say <- function(s) cat(sub("[ ]+$", "", s), "\n", sep = "")
+
+        block_width <- max(block_width,
           if (two_cols)
-            cat(strrep(" ", indent), padr(lab, lab_w), g, padl(c1, srcn_w), g,
-                padl(p1, pct_w), g, padl(c2, pooln_w), g, padl(p2, pct_w),
-                "\n", sep = "")
+            lab_end + nchar(g) + srcn_w + nchar(g) + pct_w +
+                      nchar(g) + pooln_w + nchar(g) + pct_w
           else
-            cat(strrep(" ", indent), padr(lab, lab_w), g, padl(c1, srcn_w), g,
-                padl(p1, pct_w), "\n", sep = "")
+            lab_end + nchar(g) + srcn_w + nchar(g) + pct_w)
+
+        emit <- function(indent, lab, lab_w, c1, p1, c2, p2, header) {
+          c1f <- if (header) ctr(c1, srcn_w)  else ctr(padl(c1, vf_src),  srcn_w)
+          c2f <- if (header) ctr(c2, pooln_w) else ctr(padl(c2, vf_pool), pooln_w)
+          p1f <- if (header) ctr(p1, pct_w)   else padl(p1, pct_w)
+          p2f <- if (header) ctr(p2, pct_w)   else padl(p2, pct_w)
+          line <- if (two_cols)
+            paste0(strrep(" ", indent), padr(lab, lab_w), g, c1f, g, p1f,
+                   g, c2f, g, p2f)
+          else
+            paste0(strrep(" ", indent), padr(lab, lab_w), g, c1f, g, p1f)
+          say(line)
         }
 
         cat("\n")
         emit(h_ind, "Missing-data breakdown", lab_end - h_ind,
-             src_hdr, "%", pool_hdr, "%")
+             src_hdr, "%", pool_hdr, "%", TRUE)
         for (d in disp) {
-          cat(strrep(" ", 4L), d$var, "\n", sep = "")
+          say(paste0(strrep(" ", v_ind), d$var))
           for (j in seq_len(nrow(d$rows))) {
             sc <- d$rows$src[j]; pl <- d$rows$pool[j]
             emit(c_ind, d$rows$code_label[j], lab_end - c_ind,
                  as.character(sc), fmt1(sc / n_original * 100),
-                 as.character(pl), fmt1(pl / n_pool * 100))
+                 as.character(pl), fmt1(pl / n_pool * 100), FALSE)
           }
         }
       }
     }
+    # Close the diagnostics block with a single rule (results follow below),
+    # sized to the wider of the tables that rendered.
+    if (block_width > 0L) cat(strrep("\u2500", block_width), "\n", sep = "")
     cat("\n")
   }
 
@@ -2749,16 +2783,7 @@
     return(list(kind = "datetime", num = NULL))
   if (is.complex(x)) return(list(kind = "complex", num = NULL))
   if (is.raw(x))     return(list(kind = "raw",     num = NULL))
-  if (haven::is.labelled(x)) {
-    # Character-backed haven_labelled (e.g. country codes "US"/"UK" carrying
-    # value labels) has no numeric codes to summarize. Route it to the text-
-    # categorical branch so jdesc refuses cleanly ("use jfreq()") instead of
-    # coercing the character backing to all-NA and emitting "NAs introduced
-    # by coercion". Numeric-backed labelled falls through to the numeric-ish
-    # "labelled" kind unchanged. (Session 51)
-    if (typeof(x) == "character") return(list(kind = "text_character", num = NULL))
-    return(list(kind = "labelled", num = .jst_as_numeric(x)))
-  }
+  if (haven::is.labelled(x)) return(list(kind = "labelled", num = .jst_as_numeric(x)))
   if (is.logical(x)) return(list(kind = "logical", num = as.numeric(x)))
   if (is.factor(x)) {
     num <- suppressWarnings(as.numeric(as.character(x)))
@@ -2976,64 +3001,6 @@
   if (max(vals) > 6)           return(FALSE)
 
   TRUE
-}
-
-
-#' Internal helper: jstats analysis-role class for display
-#'
-#' Single display-layer resolver that reports how jstats treats a variable,
-#' for the jscreen() "Variable Types" table. It does NOT define any new
-#' classification rules: it composes the existing single-source helpers
-#' (\code{.jst_var_kind()}, \code{.jst_is_dichotomy()},
-#' \code{.jst_is_discrete_integer()}) so the screening report cannot drift
-#' from how analyses and the outlier-skip actually treat a variable. The
-#' same resolver decides jscreen's outlier-screening (screened iff
-#' \code{class == "Numeric"}), so the Class column and the Outliers column
-#' can never disagree.
-#'
-#' Class (the analysis role): one of "Numeric", "Categorical",
-#' "Numbers-as-text", "Date-time", "Unsupported". Storage facts (labelled
-#' vs plain, character backing) live in jscreen's separate "Base R Type"
-#' column, never here — a base-R numeric can resolve to Numeric, or to
-#' Categorical (dichotomy), or to Categorical (N-category), depending only
-#' on the analysis-relevant structure.
-#'
-#' Sub-class (for Categorical only; "" otherwise): "dichotomy" for a two-
-#' value variable, else "N-category" (e.g. "4-category") from the count of
-#' distinct non-missing values. The boundary between Numeric and Categorical
-#' is exactly the package's existing rule: a dichotomy (any coding), a
-#' factor / logical / character, a haven-labelled variable with <= 6
-#' categories, or a whole-number 0-6 numeric is Categorical; everything else
-#' numeric-ish (continuous numeric, or labelled with 7+ categories) is
-#' Numeric. (A future jcount()/jdummy()-style registry would be read here.)
-#'
-#' @param x A variable / data-frame column.
-#' @return A list with \code{class} (character) and \code{subclass}
-#'   (character, "" when none).
-#' @keywords internal
-.jst_jstats_class <- function(x) {
-  k <- .jst_var_kind(x)
-
-  # Non-analyzable / distinctly-handled kinds first.
-  if (k$kind == "datetime")     return(list(class = "Date-time",       subclass = ""))
-  if (k$kind == "numeric_text") return(list(class = "Numbers-as-text", subclass = ""))
-  if (k$kind %in% c("complex", "raw", "list", "other"))
-    return(list(class = "Unsupported", subclass = ""))
-
-  # Numeric-ish (numeric / labelled / logical / numeric_factor) or text
-  # categorical (text_factor / text_character). Decide Numeric vs Categorical
-  # with the same helpers the analysis gate and the outlier-skip use.
-  dich   <- .jst_is_dichotomy(x)
-  is_cat <- k$kind %in% c("text_factor", "text_character") ||
-            is.factor(x) || is.logical(x) ||
-            dich$is_dichotomy ||
-            .jst_is_discrete_integer(x)
-
-  if (!is_cat) return(list(class = "Numeric", subclass = ""))
-
-  if (dich$is_dichotomy) return(list(class = "Categorical", subclass = "dichotomy"))
-  n_unique <- length(unique(x[!is.na(x)]))
-  list(class = "Categorical", subclass = paste0(n_unique, "-category"))
 }
 
 
@@ -3947,7 +3914,7 @@ jcomplete <- function(data, ...) {
   }
   if (!is.null(prior_complete) &&
       !identical(prior_complete$vars, variable_names)) {
-    cat("  Replaced the previous jcomplete on ", .jst_data_name, " (was: ",
+    cat("  Replaced the previous jcomplete on this data frame (was: ",
         paste(prior_complete$vars, collapse = ", "), ").\n", sep = "")
   }
 
@@ -4619,7 +4586,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
 
   # Map the slot value to a user-facing label. "none" reads as "None
   # selected" so users understand they're in the no-auto-conversion
-  # default; "spss" / "stata" surface in their familiar capitalizations.
+  # default; "spss" / "stata" surface in their familiar capitalisations.
   mc_label <- switch(mc,
                      none  = "None selected",
                      spss  = "SPSS",
@@ -5488,34 +5455,8 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL,
     sort_codes <- NULL
     sort_levels <- NULL
 
-    # Character-backed haven_labelled (e.g. "US"/"UK" carrying value labels):
-    # the stored "codes" are strings, so the numeric-labelled path below would
-    # coerce them to all-NA and yield an empty table plus an "NAs introduced
-    # by coercion" warning. Display each stored value with its label as
-    # "code: label" (bare code when unlabelled), sorted by the stored value,
-    # mirroring the numeric-labelled layout with no numeric coercion. The
-    # .jst_var_kind detector routes this kind to text_character for jdesc;
-    # jfreq tabulates it here instead of refusing. (Session 51)
-    if (haven::is.labelled(temp_var) && typeof(temp_var) == "character") {
-      codes_chr  <- as.character(unclass(temp_var))
-      val_labs   <- labelled::val_labels(temp_var)
-      lab_lookup <- if (!is.null(val_labs) && length(val_labs) > 0L) {
-        stats::setNames(names(val_labs), as.character(unname(val_labs)))
-      } else {
-        character(0)
-      }
-      lab_for     <- unname(lab_lookup[codes_chr])
-      display_str <- ifelse(is.na(codes_chr), NA_character_,
-                            ifelse(!is.na(lab_for) & nzchar(lab_for),
-                                   paste(codes_chr, lab_for, sep = ": "),
-                                   codes_chr))
-      uniq        <- !is.na(codes_chr) & !duplicated(display_str)
-      sort_codes  <- codes_chr[uniq]
-      sort_levels <- display_str[uniq][order(sort_codes)]
-      temp_var    <- factor(display_str, levels = sort_levels)
-
-    # Haven-labelled (numeric-backed): combine numeric codes with value labels.
-    } else if (haven::is.labelled(temp_var)) {
+    # Haven-labelled: combine numeric codes with value labels.
+    if (haven::is.labelled(temp_var)) {
       label_text <- as.character(haven::as_factor(temp_var))
       codes      <- .jst_as_numeric(temp_var)
       val_labs   <- labelled::val_labels(temp_var)
@@ -5770,73 +5711,37 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL,
 
 #' Data screening overview
 #'
-#' Provides a quick overview of a data frame for screening. A red "Data
-#' Screening" title is printed first, then a short header block (case and
-#' variable counts, cases with missing data, variables with outliers),
-#' followed by up to three tables: a Variable Types table (Base R storage
-#' type, the jstats analysis-role class, an optional sub-class, and distinct-
-#' value counts), a Missing Data & Outliers table, and — when variable labels
-#' are shown — a Variable Labels table last. Handles haven-labelled and
-#' date/time variables gracefully.
+#' Provides a quick overview of a data frame including the number of
+#' cases, variable types, missing data counts and percentages, and
+#' potential outliers for numeric variables. Handles haven-labelled
+#' variables by reporting their labelled status.
 #'
-#' The jstats Class column reports how the package treats each variable in
-#' analyses (Numeric, Categorical, Numbers-as-text, Date-time, Unsupported),
-#' in contrast to the Base R Type column's storage view; the same
-#' classification gates outlier screening, so only Numeric-class variables
-#' are SD-screened and the Outliers cell is left blank for the rest. Zero
-#' counts are shown blank so only affected variables carry numbers; a column
-#' (or the whole Missing/Outliers table) is omitted entirely when nothing is
-#' flagged, and the header count lines explain the omission.
+#' When variable names are supplied, only those variables are screened.
+#' When omitted, all variables in the data frame are screened. If a
+#' \code{subset} expression references variables not already in the
+#' screening list, they are included automatically.
 #'
-#' When variable names are supplied, only those variables are screened. When
-#' omitted, all variables in the data frame are screened. If a \code{subset}
-#' expression references variables not already in the screening list, they
-#' are included automatically.
+#' A red "Data Screening" title is printed first, followed by a dataset
+#' summary, variable labels (if present), and the screening table.
 #'
 #' @param data A data frame.
 #' @param ... Optional unquoted variable names to screen. If omitted,
 #'   all variables in the data frame are screened.
 #' @param outlier.sd Numeric. Number of standard deviations from the mean
-#'   to flag as potential outliers (Numeric-class variables only). Default
-#'   is 3.
+#'   to flag as potential outliers. Default is 3.
 #' @param subset An optional unquoted logical expression (e.g.
 #'   \code{Group == 1}) to subset cases for this call only. Applied after
 #'   jcomplete and jsubset. Does not affect other function calls.
-#' @param labels Logical or NULL. If TRUE, prints the Variable Labels table
-#'   (last) when labels are available. If FALSE, suppresses it. If NULL
-#'   (default), defers to \code{joutput()}'s \code{var.labels} setting.
-#' @param types Logical. If TRUE (default), prints the Variable Types table.
-#'   Set FALSE to suppress it.
-#' @param issues Logical. If TRUE (default), prints the Missing Data &
-#'   Outliers table, which lists only the variables that actually have
-#'   missing data or flagged outliers (clean variables are omitted). Set
-#'   FALSE to suppress the table entirely. Suppressing \code{types},
-#'   \code{issues}, and \code{labels} together leaves only the header block.
-#' @param r.type Logical. If TRUE, adds a "Base R Type" column (numeric /
-#'   haven_labelled / factor / character / date-time) to the Variable Types
-#'   table, showing each variable's storage type alongside its jstats class.
-#'   Default is FALSE: the storage type is expert detail (its main signal is
-#'   "this variable carries value labels / came from SPSS or Stata"), so it
-#'   is opt-in rather than shown by default. The returned data frame always
-#'   includes it regardless of this setting.
+#' @param labels Logical or NULL. If TRUE, prints variable labels
+#'   when available. If FALSE, suppresses them. If NULL (default),
+#'   defers to \code{joutput()}'s \code{var.labels} setting.
 #'
-#' @return Invisibly returns a data frame of the screening results, with one
-#'   row per variable and columns including the Base R type, the jstats
-#'   \code{Class} and \code{SubClass}, distinct-value count, missing count
-#'   and percentage, and the outlier count (NA for non-Numeric variables).
-#'   The returned values are the raw counts; only the printed tables blank
-#'   zeros and omit clean rows.
+#' @return Invisibly returns a data frame containing the screening results.
 #'
 #' @examples
 #' # With explicit data frame
 #' jscreen(mtcars)
 #' jscreen(mtcars, outlier.sd = 2.5)
-#'
-#' # Show the Base R storage type column
-#' jscreen(mtcars, r.type = TRUE)
-#'
-#' # Suppress tables (header block only)
-#' jscreen(mtcars, types = FALSE, issues = FALSE)
 #'
 #' # Using juse() default
 #' juse(mtcars)
@@ -5848,8 +5753,7 @@ jfreq <- function(data, ..., subset = NULL, labels = NULL,
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
-jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = NULL,
-                    types = TRUE, issues = TRUE, r.type = FALSE) {
+jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = NULL) {
 
   # Resolve the first argument: explicit data frame, juse default,
   # or bare-symbol-as-variable-name (leading comma omitted).
@@ -5926,19 +5830,21 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = NULL,
     }
   }
 
-  # Resolve display toggle for the Variable Labels table.
+  # Resolve display toggles
   labels <- .jst_resolve_toggle("var.labels", labels)
 
   n_cases   <- nrow(data)
   n_vars    <- ncol(data)
   var_names <- names(data)
 
-  # -- Per-variable screening rows -------------------------------------------
+  cat("  Cases:", n_cases, "\n")
+  cat("  Variables:", n_vars, "\n")
+  cat("  Complete cases (no missing on any variable):",
+      sum(stats::complete.cases(data)), "\n")
+
   screen_rows <- lapply(var_names, function(v) {
     col <- data[[v]]
 
-    # Base R Type: the storage view (numeric / haven_labelled / factor /
-    # character / date-time / ...). Distinct from the jstats Class below.
     var_type <- if (haven::is.labelled(col)) {
       "haven_labelled"
     } else if (is.factor(col)) {
@@ -5948,40 +5854,30 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = NULL,
     } else if (is.character(col)) {
       "character"
     } else {
-      # Pre-coercion class so a POSIXlt column coerced to POSIXct above still
-      # reports its original Type. (Session 50)
+      # Use the pre-coercion class so a POSIXlt column coerced to POSIXct
+      # above still reports its original Type. (Session 50)
       paste(orig_classes[[v]], collapse = ", ")
     }
 
-    # jstats analysis-role classification via the single resolver. The same
-    # resolver gates outlier screening (Numeric only), so the Class column
-    # and the Outliers column cannot disagree. (Session 51)
-    jc          <- .jst_jstats_class(col)
     n_missing   <- sum(is.na(col))
     pct_missing <- round(n_missing / n_cases * 100, 1)
     n_unique    <- length(unique(col[!is.na(col)]))
 
-    # SD-outlier screening applies only to Numeric-class variables. For every
-    # other class (Categorical including dichotomies, Numbers-as-text,
-    # Date-time, Unsupported) the >SD rule is meaningless, so the Outliers
-    # cell stays blank (NA) and the Class column explains why. (Session 51)
-    n_outliers <- NA_integer_
-    if (jc$class == "Numeric") {
+    n_outliers <- NA
+    if (is.numeric(col) || haven::is.labelled(col)) {
       num_col <- .jst_as_numeric(col)
       m <- mean(num_col, na.rm = TRUE)
       s <- stats::sd(num_col, na.rm = TRUE)
       n_outliers <- if (!is.na(s) && s > 0) {
-        as.integer(sum(abs(num_col - m) > outlier.sd * s, na.rm = TRUE))
+        sum(abs(num_col - m) > outlier.sd * s, na.rm = TRUE)
       } else {
-        0L
+        0
       }
     }
 
     data.frame(
       Variable    = v,
       Type        = var_type,
-      Class       = jc$class,
-      SubClass    = jc$subclass,
       Unique      = n_unique,
       Missing     = n_missing,
       Pct_Missing = pct_missing,
@@ -5992,92 +5888,46 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, labels = NULL,
 
   screen_table <- do.call(rbind, screen_rows)
 
-  # -- Header block ----------------------------------------------------------
-  # "Cases with missing data" = rows with >= 1 missing value (the listwise-
-  # deletion magnitude). "Variables with outliers" = columns with >= 1 flagged
-  # outlier (outliers are inherently per-variable, so the unit is variables).
-  # Both lines always print: a 0 on either line is what explains a dropped
-  # column (or the dropped Missing/Outliers table) below. (Session 51)
-  n_cases_missing <- sum(!stats::complete.cases(data))
-  n_vars_outliers <- sum(!is.na(screen_table$Outliers) & screen_table$Outliers > 0)
-
-  cat("  Cases:", n_cases, "\n")
-  cat("  Variables:", n_vars, "\n")
-  cat("  Cases with missing data:", n_cases_missing, "\n")
-  cat("  Variables with outliers:", n_vars_outliers, "\n")
-
-  any_missing  <- any(screen_table$Missing > 0)
-  any_outliers <- n_vars_outliers > 0
-  any_subclass <- any(nzchar(screen_table$SubClass))
-
-  # -- Table 1: Variable Types -----------------------------------------------
-  # Base R Type column is opt-in (r.type = TRUE); Sub-class column appears
-  # only when at least one variable has a sub-class.
-  if (isTRUE(types)) {
-    cols  <- "Variable"
-    heads <- "Variable"
-    if (isTRUE(r.type)) {
-      cols  <- c(cols, "Type")
-      heads <- c(heads, "Base R Type")
-    }
-    cols  <- c(cols, "Class")
-    heads <- c(heads, "jstats Class")
-    if (any_subclass) {
-      cols  <- c(cols, "SubClass")
-      heads <- c(heads, "Sub-class")
-    }
-    cols  <- c(cols, "Unique")
-    heads <- c(heads, "Unique Values")
-    cat("\n")
-    .jst_print_table(screen_table[, cols, drop = FALSE],
-                     caption   = "Variable Types",
-                     col.names = heads,
-                     row.names = FALSE)
-  }
-
-  # -- Table 2: Missing Data & Outliers --------------------------------------
-  # Lists only the variables that actually have missing data or a flagged
-  # outlier (clean variables are omitted, so the table is a short "needs
-  # attention" view). Within the shown rows, zeros are blanked (set to NA,
-  # which .jst_print_table renders empty). The Missing/% Missing pair is
-  # dropped when nothing is missing anywhere, the Outliers column when nothing
-  # is flagged, and the whole table when both are clean (the header count
-  # lines already say so).
-  if (isTRUE(issues) && (any_missing || any_outliers)) {
-    flagged <- screen_table$Missing > 0 |
-               (!is.na(screen_table$Outliers) & screen_table$Outliers > 0)
-    st    <- screen_table[flagged, , drop = FALSE]
-    t2    <- data.frame(Variable = st$Variable, stringsAsFactors = FALSE)
-    heads <- "Variable"
-    if (any_missing) {
-      miss <- st$Missing
-      pct  <- st$Pct_Missing
-      pct[miss == 0]  <- NA_real_
-      miss[miss == 0] <- NA_integer_
-      t2$Missing     <- miss
-      t2$Pct_Missing <- pct
-      heads <- c(heads, "Missing", "% Missing")
-    }
-    if (any_outliers) {
-      out <- st$Outliers
-      out[!is.na(out) & out == 0] <- NA_integer_
-      t2$Outliers <- out
-      heads <- c(heads, "Outliers")
-    }
-    cat("\n")
-    .jst_print_table(t2,
-                     caption   = paste0("Missing Data & Outliers (outliers > ",
-                                        outlier.sd, " SD from mean)"),
-                     col.names = heads,
-                     row.names = FALSE)
-  }
-
-  # -- Table 3: Variable Labels (last; only when toggled on) -----------------
-  if (isTRUE(labels)) {
+  if (.jst_resolve_toggle("var.labels", labels)) {
     cat("\n")
     .print_var_labels(data, var_names)
+  } else {
+    cat("\n")
   }
 
+  .jst_print_table(screen_table,
+                   caption = paste0("Data Screening (outliers defined as > ",
+                                    outlier.sd, " SD from mean)"),
+                   col.names = c("Variable", "Type", "Unique Values",
+                                 "Missing", "% Missing", "Outliers"),
+                   row.names = FALSE)
+
+  missing_vars <- screen_table[screen_table$Missing > 0, ]
+  outlier_vars <- screen_table[!is.na(screen_table$Outliers) &
+                                 screen_table$Outliers > 0, ]
+
+  if (nrow(missing_vars) > 0) {
+    cat("\nVariables with missing data:\n")
+    for (i in seq_len(nrow(missing_vars))) {
+      cat("  ", missing_vars$Variable[i], ": ",
+          missing_vars$Missing[i], " missing (",
+          missing_vars$Pct_Missing[i], "%)\n", sep = "")
+    }
+  } else {
+    cat("\nNo missing data detected.\n")
+  }
+
+  if (nrow(outlier_vars) > 0) {
+    cat("\nVariables with potential outliers (> ", outlier.sd, " SD):\n", sep = "")
+    for (i in seq_len(nrow(outlier_vars))) {
+      cat("  ", outlier_vars$Variable[i], ": ",
+          outlier_vars$Outliers[i], " cases\n", sep = "")
+    }
+  } else {
+    cat("\nNo potential outliers detected.\n")
+  }
+
+  cat("\n")
   cat("\n")
   invisible(screen_table)
 }
@@ -9569,20 +9419,11 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL,
 #'   }
 #'
 #' @keywords internal
-.jst_resolve_varrange <- function(quos_list, data, fn_name, data_name = NULL) {
+.jst_resolve_varrange <- function(quos_list, data, fn_name) {
 
   all_cols    <- names(data)
   var_names   <- character(0)
   label_parts <- character(0)
-
-  # Name the data frame in not-found / ordering messages when the caller
-  # knows it, matching the package-wide convention (.jst_check_vars names the
-  # frame); fall back to the generic phrasing only when no name is available.
-  frame_ref <- if (!is.null(data_name) && nzchar(data_name)) {
-    data_name
-  } else {
-    "the data frame"
-  }
 
   for (q in quos_list) {
     expr <- rlang::quo_get_expr(q)
@@ -9597,15 +9438,15 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL,
 
       if (is.na(start_idx)) {
         stop(
-          "Variable '", start_name, "' not found in ", frame_ref, ".\n",
-          "Check spelling and capitalization.",
+          "Variable '", start_name, "' not found in the data frame.\n",
+          "Check spelling and capitalisation.",
           call. = FALSE
         )
       }
       if (is.na(end_idx)) {
         stop(
-          "Variable '", end_name, "' not found in ", frame_ref, ".\n",
-          "Check spelling and capitalization.",
+          "Variable '", end_name, "' not found in the data frame.\n",
+          "Check spelling and capitalisation.",
           call. = FALSE
         )
       }
@@ -9613,7 +9454,7 @@ jalpha <- function(data, ..., subset = NULL, labels = NULL,
       if (start_idx > end_idx) {
         stop(
           "In ", start_name, ":", end_name, ", '", start_name,
-          "' comes after '", end_name, "' in the column order of ", frame_ref, ".\n",
+          "' comes after '", end_name, "' in the data frame column order.\n",
           "Reverse the order: ", end_name, ":", start_name,
           call. = FALSE
         )
@@ -9723,7 +9564,7 @@ jsum <- function(data, ..., min.valid = NULL, var.label = NULL) {
     class(quos_list) <- "quosures"
   }
 
-  resolved    <- .jst_resolve_varrange(quos_list, data, "jsum", .jst_data_name)
+  resolved    <- .jst_resolve_varrange(quos_list, data, "jsum")
   var_names   <- resolved$var_names
   label_parts <- resolved$label_parts
 
@@ -9915,7 +9756,7 @@ javg <- function(data, ..., min.valid = NULL, fixed = FALSE, var.label = NULL) {
     class(quos_list) <- "quosures"
   }
 
-  resolved    <- .jst_resolve_varrange(quos_list, data, "javg", .jst_data_name)
+  resolved    <- .jst_resolve_varrange(quos_list, data, "javg")
   var_names   <- resolved$var_names
   label_parts <- resolved$label_parts
 
@@ -10118,8 +9959,7 @@ jrelabel <- function(data, var, labels = NULL, var.label = NULL) {
     stop("The first argument must be a data frame.", call. = FALSE)
   }
   if (!var_name %in% names(data)) {
-    frame_ref <- if (!is.null(arg1$name) && nzchar(arg1$name)) arg1$name else "the data frame"
-    stop(paste0("Variable '", var_name, "' not found in ", frame_ref, "."), call. = FALSE)
+    stop(paste0("Variable '", var_name, "' not found in the data frame."), call. = FALSE)
   }
 
   x <- data[[var_name]]
@@ -13136,7 +12976,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
       !isTRUE(getOption(".jst_udm_notice_shown", FALSE))
     }
     if (show_notice && !quiet) {
-      message(.jst_format_udm_narrative(udm_info, preserve.udm, data_name = obj_name))
+      message(.jst_format_udm_narrative(udm_info, preserve.udm))
       options(.jst_udm_notice_shown = TRUE)
     }
   }
@@ -13461,12 +13301,7 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
 #' \code{code} column of \code{.jst_missing_info()}'s return.
 #'
 #' @keywords internal
-.jst_format_udm_narrative <- function(udm_info, preserve.udm, max_show = 10L,
-                                      data_name = "data") {
-  # Suggested jconvert() calls below use the loaded object's name (threaded
-  # from jload) so the advice is copy-paste runnable; fall back to the
-  # generic placeholder only when no name is available.
-  call_name <- if (!is.null(data_name) && nzchar(data_name)) data_name else "data"
+.jst_format_udm_narrative <- function(udm_info, preserve.udm, max_show = 10L) {
   n_vars <- length(udm_info)
   if (n_vars == 0) return(NULL)
 
@@ -13520,9 +13355,9 @@ jload <- function(file, name = NULL, use = FALSE, overwrite = FALSE,
       list_str,
       "\nThese codes are excluded as missing in jstats analyses. ",
       "For better base R compatibility, convert them:\n",
-      sprintf("  jconvert(%s, to = \"stata\")  \u2014 retains missing-value codes, ", call_name),
+      "  jconvert(data, to = \"stata\")  \u2014 retains missing-value codes, ",
       "base R compatible (recommended)\n",
-      sprintf("  jconvert(%s, to = \"baseR\")  \u2014 converts to plain NA and ", call_name),
+      "  jconvert(data, to = \"baseR\")  \u2014 converts to plain NA and ",
       "removes missing-value codes"
     )
   } else {
