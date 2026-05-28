@@ -16,6 +16,7 @@ jlogistic(
   diagnostics = NULL,
   full = FALSE,
   case.processing.detail = NULL,
+  digits = NULL,
   ...
 )
 }
@@ -34,8 +35,8 @@ must be a binary variable coded 0/1.}
 \code{"both"} shows \code{"name: label"};
 \code{"labels"} replaces each coefficient's variable name with its label
 in the Coefficients table (factor level decoration is preserved) -- best
-for short labels; \code{"legend"} prints a label legend between the
-Model Summary (fit) block and the Coefficients table;
+for short labels; \code{"legend"} prints a label legend just below the
+Coefficients table (at the coefficients/fit seam);
 \code{"legend.bottom"} prints it at the very end. NULL (default) defers
 to \code{joutput()}'s \code{variable.id} setting. Not a logical.}
 
@@ -62,6 +63,13 @@ diagnostics. Does not override explicit FALSE values.}
 Processing Summary detail tier: one of \code{"none"},
 \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
 uses the active \code{joutput()} level default.}
+
+\item{digits}{Integer or NULL. Number of decimal places for continuous
+statistics in the output tables (range 0-7; \code{digits = 0} prints
+whole numbers with no trailing decimal point). Does not affect p-values,
+percentages, or integer quantities (counts, N, degrees of freedom),
+which keep their own fixed conventions. NULL (default) defers to
+\code{joutput()}'s \code{digits} setting (default 3).}
 
 \item{...}{Reserved for argument-name checking. Passing \code{which},
 \code{plots}, or \code{show} will produce a helpful error suggesting

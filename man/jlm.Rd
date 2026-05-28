@@ -14,6 +14,7 @@ jlm(
   diagnostics = NULL,
   full = FALSE,
   case.processing.detail = NULL,
+  digits = NULL,
   ...
 )
 }
@@ -60,6 +61,13 @@ explicit FALSE values.}
 Processing Summary detail tier: one of \code{"none"},
 \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
 uses the active \code{joutput()} level default.}
+
+\item{digits}{Integer or NULL. Number of decimal places for continuous
+statistics in the output tables (range 0-7; \code{digits = 0} prints
+whole numbers with no trailing decimal point). Does not affect p-values,
+percentages, or integer quantities (counts, N, degrees of freedom),
+which keep their own fixed conventions. NULL (default) defers to
+\code{joutput()}'s \code{digits} setting (default 3).}
 
 \item{...}{Reserved for argument-name checking. Passing \code{which},
 \code{plots}, or \code{show} will produce a helpful error suggesting

@@ -230,6 +230,49 @@
   }
 }
 
+#' Internal helper: print a role-grouped model variable-label legend
+#'
+#' The regression layout's replacement for the flat \code{.print_var_labels}
+#' list: lists a model's variables grouped by role -- the outcome first, then
+#' the predictors. A variable with a label shows as "name = label"; a variable
+#' with no label shows as the bare "name" (absence of a label is conveyed by
+#' its absence, not by a "None" marker). Used by jlm and jlogistic in the
+#' "legend" and "legend.bottom" variable.id modes. Predictors are listed by
+#' their original formula names (e.g. "Program"), not expanded dummy columns;
+#' per-dummy-level value labelling is handled separately by the value.id
+#' coefficient work. Matches the flat legend's indented-lines + trailing-blank
+#' structure so co-located blocks space the same way.
+#'
+#' @param data A data frame (or pre-conversion label source) whose columns may
+#'   carry variable labels.
+#' @param dv_name Character. The outcome (response) variable name.
+#' @param iv_names Character vector. The predictor variable names, in order.
+#'
+#' @keywords internal
+.print_model_var_labels <- function(data, dv_name, iv_names) {
+  fmt_line <- function(v) {
+    vl <- labelled::var_label(data[[v]])
+    if (!is.null(vl) && length(vl) > 0 && !is.na(vl[1]) && nzchar(vl[1])) {
+      paste0("  ", v, " = ", as.character(vl[1]))
+    } else {
+      paste0("  ", v)
+    }
+  }
+  block <- character(0)
+  if (length(dv_name) == 1L && dv_name %in% names(data)) {
+    block <- c(block, "Outcome:", fmt_line(dv_name))
+  }
+  iv_present <- iv_names[iv_names %in% names(data)]
+  if (length(iv_present) > 0L) {
+    block <- c(block, "Predictors:",
+               vapply(iv_present, fmt_line, character(1), USE.NAMES = FALSE))
+  }
+  if (length(block) > 0L) {
+    cat(paste(block, collapse = "\n"))
+    cat("\n\n")
+  }
+}
+
 #' Internal helper: print a value-label legend block
 #'
 #' Companion to \code{.print_var_labels} for the \code{value.id} legend modes.
@@ -399,21 +442,24 @@
 #' @param col.names Optional character vector of column headers. If NULL,
 #'   uses \code{names(df)}.
 #' @param row.names Logical. If TRUE, includes row names as the first column.
-#' @param align Optional character vector of alignment codes ("l", "r", "c"),
-#'   one per displayed column. If NULL, auto-detects: numeric = right,
-#'   character/other = left.
+#' @param align Optional character vector of alignment codes ("l", "r", "c",
+#'   or "d"), one per displayed column. If NULL, auto-detects: numeric = right,
+#'   character/other = left. Code "d" is a decimal-tab: data cells are
+#'   right-justified (so a uniform decimal-places column aligns on the decimal
+#'   point) while the header stays centered over the column.
 #' @param caption Optional title string printed above the table.
-#' @param indent Number of leading spaces for each line. Default 2.
+#' @param indent Number of leading spaces for each data row. Default 0,
+#'   so data rows sit flush at column 1, aligned with the caption, header,
+#'   and separator (which use \code{header.indent}). Callers that want a
+#'   nested/indented sub-table pass a positive value (e.g. \code{indent = 4}).
 #' @param header.indent Number of leading spaces for the caption,
-#'   header row, and separator row. Defaults to 0 (caption and header
-#'   flush-left at column 1, with data rows indented). Set to a
-#'   positive number to indent these alongside the data --- rare; the
-#'   default produces the package's standard "block header at column
-#'   1, data indented" layout.
+#'   header row, and separator row. Defaults to 0. With the default
+#'   \code{indent}, header and data share the same left edge; raise one
+#'   relative to the other only for special layouts.
 #'
 #' @keywords internal
 .jst_print_table <- function(df, col.names = NULL, row.names = TRUE,
-                             align = NULL, caption = NULL, indent = 2,
+                             align = NULL, caption = NULL, indent = 0,
                              header.indent = 0) {
 
   headers <- if (!is.null(col.names)) col.names else names(df)
@@ -1420,19 +1466,19 @@
                   posthoc = FALSE, diagnostics = FALSE,
                   case.processing = FALSE, case.processing.detail = "none",
                   variable.id = "names", value.id = "values",
-                  ref.categories = FALSE,
+                  ref.categories = FALSE, digits = 3,
                   udm.notice = FALSE),
   standard = list(effect.size = TRUE,  ci = TRUE,  levene = FALSE,
                   posthoc = FALSE, diagnostics = FALSE,
                   case.processing = NULL,  case.processing.detail = "totals",
                   variable.id = "names", value.id = "both",
-                  ref.categories = TRUE,
+                  ref.categories = TRUE, digits = 3,
                   udm.notice = NULL),
   full     = list(effect.size = TRUE,  ci = TRUE,  levene = TRUE,
                   posthoc = TRUE,  diagnostics = TRUE,
                   case.processing = TRUE,  case.processing.detail = "per_code",
                   variable.id = "legend", value.id = "both",
-                  ref.categories = TRUE,
+                  ref.categories = TRUE, digits = 3,
                   udm.notice = TRUE)
 )
 
@@ -1492,6 +1538,56 @@
   level    <- getOption(".jst_output_level", "standard")
   defaults <- .jst_output_defaults
   defaults[[level]][[name]]
+}
+
+#' Internal helper: validate and resolve the digits (decimal places) setting
+#'
+#' Thin wrapper over \code{.jst_resolve_toggle("digits", ...)} that first
+#' validates a non-NULL per-call \code{digits} argument: it must be a single
+#' whole number in the range 0-7. The resolved value is the number of decimal
+#' places shown for continuous tabular statistics; it never governs p-values,
+#' case-processing percentages, integer quantities (N, df, counts), or the
+#' multicollinearity-warning prose numbers (all fixed by their own
+#' conventions). Returns an integer.
+#'
+#' @param per_call The value of the calling function's \code{digits} argument,
+#'   or NULL to defer to joutput().
+#'
+#' @return Integer in 0-7.
+#'
+#' @keywords internal
+.jst_resolve_digits <- function(per_call) {
+  if (!is.null(per_call)) {
+    if (length(per_call) != 1L || is.na(per_call) ||
+        !is.numeric(per_call) || per_call != as.integer(per_call) ||
+        per_call < 0L || per_call > 7L) {
+      stop("digits must be a single whole number between 0 and 7.",
+           call. = FALSE)
+    }
+  }
+  as.integer(.jst_resolve_toggle("digits", per_call))
+}
+
+#' Internal helper: build a decimal-places formatter for continuous stats
+#'
+#' Returns a function that formats a numeric value to \code{digits} decimal
+#' places via \code{sprintf("%.<digits>f")}, preserving base R's half-to-even
+#' rounding (the option only changes the number of places, never the rounding
+#' rule). \code{digits = 0} yields whole numbers with no trailing decimal
+#' point. NA formats to the empty string so it renders as a blank cell.
+#'
+#' @param digits Integer number of decimal places (0-7).
+#'
+#' @return A function of one argument (coerced via as.numeric) returning a
+#'   character string.
+#'
+#' @keywords internal
+.jst_make_fmt <- function(digits) {
+  spec <- paste0("%.", digits, "f")
+  function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    ifelse(is.na(x), "", sprintf(spec, x))
+  }
 }
 
 #' Internal helper: validate and resolve the variable.id display mode
@@ -4724,7 +4820,8 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
         .jst_print_table(scheme_df,
                          col.names = all_col_names,
                          row.names = TRUE,
-                         indent = 4)
+                         indent = 4,
+                         header.indent = 4)
         cat("\n    * Reference category\n")
 
         if (n_cats > 5 && !show_all) {
@@ -4897,7 +4994,8 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
         .jst_print_table(scheme_df,
                          col.names = all_col_names,
                          row.names = TRUE,
-                         indent = 4)
+                         indent = 4,
+                         header.indent = 4)
 
         cat("\n    * Reference category\n")
         if (n_cats > 5 && !show_all) {
@@ -5024,7 +5122,8 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
     .jst_print_table(scheme_df,
                      col.names = all_col_names,
                      row.names = TRUE,
-                     indent = 4)
+                     indent = 4,
+                     header.indent = 4)
 
     cat("\n    * Reference category\n")
 
@@ -5138,6 +5237,12 @@ jdummy <- function(data, var, ref = "first", show = FALSE,
 #'   it entirely; \code{NULL} ("auto") prints it only the first time
 #'   in a session, then suppresses it. Standard level uses \code{NULL}
 #'   (auto), minimal uses \code{FALSE}, full uses \code{TRUE}.
+#' @param digits Integer or NULL. Number of decimal places shown for
+#'   continuous statistics in the analysis-function output tables
+#'   (range 0-7; \code{digits = 0} prints whole numbers with no
+#'   trailing decimal point). Does not affect p-values, percentages,
+#'   or integer quantities (counts, N, degrees of freedom), which keep
+#'   their own fixed conventions. All three preset levels default to 3.
 #'
 #' @return Invisibly returns NULL. Called for its side effect of setting
 #'   session options.
@@ -5160,7 +5265,8 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
                     posthoc = NULL, diagnostics = NULL,
                     case.processing = NULL, case.processing.detail = NULL,
                     variable.id = NULL, value.id = NULL,
-                    ref.categories = NULL, udm.notice = NULL, quiet = FALSE) {
+                    ref.categories = NULL, udm.notice = NULL,
+                    digits = NULL, quiet = FALSE) {
 
   valid_levels <- c("minimal", "standard", "full")
 
@@ -5210,6 +5316,15 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
   }
   if (!is.null(ref.categories))  toggle_args$ref.categories  <- ref.categories
   if (!is.null(udm.notice))      toggle_args$udm.notice      <- udm.notice
+  if (!is.null(digits)) {
+    if (length(digits) != 1L || is.na(digits) ||
+        !is.numeric(digits) || digits != as.integer(digits) ||
+        digits < 0L || digits > 7L) {
+      stop("digits must be a single whole number between 0 and 7.",
+           call. = FALSE)
+    }
+    toggle_args$digits <- as.integer(digits)
+  }
 
   # joutput() with no level argument -- show status or apply toggles only
   if (missing(level)) {
@@ -5259,7 +5374,7 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
   toggle_names <- c("effect.size", "ci", "levene", "posthoc", "diagnostics",
                     "case.processing", "case.processing.detail",
                     "variable.id", "value.id", "ref.categories",
-                    "udm.notice")
+                    "udm.notice", "digits")
   defaults     <- .jst_output_defaults[[level]]
 
   for (nm in toggle_names) {
@@ -5274,11 +5389,14 @@ joutput <- function(level, effect.size = NULL, ci = NULL, levene = NULL,
     # case.processing.detail carries a string tier (none/totals/per_code);
     # variable.id (none/labels/legend/legend.bottom) and value.id
     # (both/values/labels) likewise carry string tiers -- show the token,
-    # not ON/OFF. case.processing and udm.notice support three states
-    # (TRUE/FALSE/NULL=AUTO); the remaining toggles are binary.
+    # not ON/OFF. digits is an integer (0-7) -- show the number. case.processing
+    # and udm.notice support three states (TRUE/FALSE/NULL=AUTO); the remaining
+    # toggles are binary.
     label <- if (nm %in% c("case.processing.detail", "variable.id",
                            "value.id")) {
       toupper(effective)
+    } else if (nm == "digits") {
+      as.character(effective)
     } else if (is.null(effective)) {
       "AUTO"
     } else if (isTRUE(effective)) {
@@ -5693,12 +5811,21 @@ jdata_dir <- function(default = ".") {
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
+#' @param digits Integer or NULL. Number of decimal places for continuous
+#'   statistics in the output tables (range 0-7; \code{digits = 0} prints
+#'   whole numbers with no trailing decimal point). Does not affect p-values,
+#'   percentages, or integer quantities (counts, N, degrees of freedom),
+#'   which keep their own fixed conventions. NULL (default) defers to
+#'   \code{joutput()}'s \code{digits} setting (default 3).
 #' @param case.processing.detail Per-call override of the Case
 #'   Processing Summary detail tier: one of \code{"none"},
 #'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
 #'   uses the active \code{joutput()} level default.
 jdesc <- function(data, ..., by = NULL, subset = NULL, variable.id = NULL,
-                  value.id = NULL, case.processing.detail = NULL) {
+                  value.id = NULL, case.processing.detail = NULL,
+                  digits = NULL) {
+
+  digits_n <- .jst_resolve_digits(digits)
 
   # Resolve the first argument: explicit data frame, juse default,
   # vector input, or bare-symbol-as-variable-name (leading comma omitted).
@@ -5900,10 +6027,10 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, variable.id = NULL,
         df <- data.frame(
           GROUP_PLACEHOLDER = group_label,
           N     = n,
-          Min   = if (n > 0) round(min(subset_data), 3) else NA,
-          Max   = if (n > 0) round(max(subset_data), 3) else NA,
-          Mean  = if (n > 0) round(m, 3) else NA,
-          SD    = if (n > 0) round(s, 3) else NA,
+          Min   = if (n > 0) round(min(subset_data), digits_n) else NA,
+          Max   = if (n > 0) round(max(subset_data), digits_n) else NA,
+          Mean  = if (n > 0) round(m, digits_n) else NA,
+          SD    = if (n > 0) round(s, digits_n) else NA,
           stringsAsFactors = FALSE
         )
         names(df)[1] <- by_disp
@@ -6016,10 +6143,10 @@ jdesc <- function(data, ..., by = NULL, subset = NULL, variable.id = NULL,
       Variable    = v,
       Total       = length(var_data),
       Non_missing = n,
-      Min         = if (n > 0) round(min(var_data, na.rm = TRUE), 3) else NA,
-      Max         = if (n > 0) round(max(var_data, na.rm = TRUE), 3) else NA,
-      Mean        = if (n > 0) round(mean(var_data, na.rm = TRUE), 3) else NA,
-      SD          = if (n > 0) round(stats::sd(var_data, na.rm = TRUE), 3) else NA,
+      Min         = if (n > 0) round(min(var_data, na.rm = TRUE), digits_n) else NA,
+      Max         = if (n > 0) round(max(var_data, na.rm = TRUE), digits_n) else NA,
+      Mean        = if (n > 0) round(mean(var_data, na.rm = TRUE), digits_n) else NA,
+      SD          = if (n > 0) round(stats::sd(var_data, na.rm = TRUE), digits_n) else NA,
       stringsAsFactors = FALSE
     )
   })
@@ -6579,6 +6706,10 @@ jfreq <- function(data, ..., subset = NULL, variable.id = NULL,
 #'   short labels); \code{"legend"} and \code{"legend.bottom"} keep names and
 #'   print a label legend after the tables. NULL (default) defers to
 #'   \code{joutput()}'s \code{variable.id} setting. Not a logical.
+#' @param value.id Not supported by \code{jscreen()}. The function does not
+#'   display value labels, so passing this argument is an error. It exists
+#'   only to return a clear message rather than misreporting the token as a
+#'   missing variable. Leave at NULL (default).
 #' @param types Logical. If TRUE (default), prints the Variable Types table.
 #'   Set FALSE to suppress it.
 #' @param issues Logical. If TRUE (default), prints the Missing Data &
@@ -6623,7 +6754,19 @@ jfreq <- function(data, ..., subset = NULL, variable.id = NULL,
 #'
 #' @export
 jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, variable.id = NULL,
-                    types = TRUE, issues = TRUE, r.type = FALSE) {
+                    value.id = NULL, types = TRUE, issues = TRUE, r.type = FALSE) {
+
+  # jscreen has no per-code surface to display value labels on, so value.id
+  # is accepted only to give an explicit, accurate error. A global
+  # joutput(value.id=) is read by the value-displaying functions and never
+  # arrives here as a per-call arg, so a non-NULL value.id can only be an
+  # explicit per-call argument. Erroring here replaces the misleading
+  # "variable not found: <token>" that resulted when the token fell into the
+  # dots and was mistaken for a variable name. (Session 62, Option A)
+  if (!is.null(value.id)) {
+    stop("value.id is not supported by jscreen(); it does not display ",
+         "value labels.", call. = FALSE)
+  }
 
   # Resolve the first argument: explicit data frame, juse default,
   # or bare-symbol-as-variable-name (leading comma omitted).
@@ -6832,21 +6975,27 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, variable.id = NULL
                (!is.na(screen_table$Outliers) & screen_table$Outliers > 0)
     st    <- screen_table[flagged, , drop = FALSE]
     t2    <- data.frame(Variable = st$Variable, stringsAsFactors = FALSE)
-    heads <- "Variable"
+    heads  <- "Variable"
+    aligns <- "l"
     if (any_missing) {
       miss <- st$Missing
       pct  <- st$Pct_Missing
       pct[miss == 0]  <- NA_real_
       miss[miss == 0] <- NA_integer_
       t2$Missing     <- miss
-      t2$Pct_Missing <- pct
-      heads <- c(heads, "Missing", "% Missing")
+      # Format % Missing at a fixed 1 dp as a string so an all-integer-valued
+      # column still shows the decimal place (e.g. "5.0", not "5"); the
+      # returned screen_table keeps the numeric Pct_Missing. (Session 63)
+      t2$Pct_Missing <- ifelse(is.na(pct), "", sprintf("%.1f", pct))
+      heads  <- c(heads, "Missing", "% Missing")
+      aligns <- c(aligns, "r", "r")
     }
     if (any_outliers) {
       out <- st$Outliers
       out[!is.na(out) & out == 0] <- NA_integer_
       t2$Outliers <- out
-      heads <- c(heads, "Outliers")
+      heads  <- c(heads, "Outliers")
+      aligns <- c(aligns, "r")
     }
     if (vlmode %in% c("labels", "both")) {
       t2$Variable <- vapply(t2$Variable,
@@ -6858,6 +7007,7 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, variable.id = NULL
                      caption   = paste0("Missing Data & Outliers (outliers > ",
                                         outlier.sd, " SD from mean)"),
                      col.names = heads,
+                     align     = aligns,
                      row.names = FALSE)
   }
 
@@ -6953,6 +7103,12 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, variable.id = NULL
 #'
 #' @export
 #' @importFrom stats t.test sd qt
+#' @param digits Integer or NULL. Number of decimal places for continuous
+#'   statistics in the output tables (range 0-7; \code{digits = 0} prints
+#'   whole numbers with no trailing decimal point). Does not affect p-values,
+#'   percentages, or integer quantities (counts, N, degrees of freedom),
+#'   which keep their own fixed conventions. NULL (default) defers to
+#'   \code{joutput()}'s \code{digits} setting (default 3).
 #' @param case.processing.detail Per-call override of the Case
 #'   Processing Summary detail tier: one of \code{"none"},
 #'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
@@ -6960,7 +7116,9 @@ jscreen <- function(data, ..., outlier.sd = 3, subset = NULL, variable.id = NULL
 jt <- function(formula, data, paired = FALSE, welch = FALSE,
                effect.size = NULL, levene = NULL, ci = NULL,
                subset = NULL, variable.id = NULL, value.id = NULL,
-               case.processing.detail = NULL, full = FALSE) {
+               case.processing.detail = NULL, full = FALSE, digits = NULL) {
+
+  digits_n <- .jst_resolve_digits(digits)
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -7106,7 +7264,7 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
     abs_devs      <- abs(dv_vals - group_means[group_factor])
     levene_model  <- stats::aov(abs_devs ~ group_factor)
     levene_result <- summary(levene_model)[[1]]
-    levene_f      <- round(levene_result$`F value`[1], 3)
+    levene_f      <- round(levene_result$`F value`[1], digits_n)
     levene_p      <- levene_result$`Pr(>F)`[1]
     levene_p_fmt  <- if (!is.na(levene_p) && levene_p < 0.001) "<.001" else sprintf("%.3f", levene_p)
 
@@ -7157,8 +7315,8 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   desc_table <- data.frame(
     Group = group_labels,
     N     = c(length(group1_data), length(group2_data)),
-    Mean  = round(c(mean(group1_data), mean(group2_data)), 3),
-    SD    = round(c(sd(group1_data),   sd(group2_data)),   3),
+    Mean  = round(c(mean(group1_data), mean(group2_data)), digits_n),
+    SD    = round(c(sd(group1_data),   sd(group2_data)),   digits_n),
     stringsAsFactors = FALSE
   )
 
@@ -7178,17 +7336,17 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   p_fmt <- if (!is.na(p_val) && p_val < 0.001) "<.001" else sprintf("%.3f", p_val)
 
   test_table <- data.frame(
-    t               = round(result$statistic, 3),
+    t               = round(result$statistic, digits_n),
     df              = round(result$parameter, 1),
     p               = p_fmt,
-    Mean_Difference = round(mean(group1_data) - mean(group2_data), 3),
+    Mean_Difference = round(mean(group1_data) - mean(group2_data), digits_n),
     stringsAsFactors = FALSE,
     row.names = NULL
   )
 
   if (ci) {
-    test_table$CI_Lower <- round(result$conf.int[1], 3)
-    test_table$CI_Upper <- round(result$conf.int[2], 3)
+    test_table$CI_Lower <- round(result$conf.int[1], digits_n)
+    test_table$CI_Upper <- round(result$conf.int[2], digits_n)
   }
 
   if (paired) {
@@ -7231,7 +7389,7 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
   }
 
   if (effect.size) {
-    cat(paste0("\n", d_label, ": ", round(cohens_d, 3), "\n"))
+    cat(paste0("\n", d_label, ": ", round(cohens_d, digits_n), "\n"))
   }
 
   .jst_print_legends(lab_src, c(dv_name, group_name), group_name,
@@ -7339,6 +7497,12 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
 #'
 #' @export
 #' @importFrom stats aov oneway.test TukeyHSD qt
+#' @param digits Integer or NULL. Number of decimal places for continuous
+#'   statistics in the output tables (range 0-7; \code{digits = 0} prints
+#'   whole numbers with no trailing decimal point). Does not affect p-values,
+#'   percentages, or integer quantities (counts, N, degrees of freedom),
+#'   which keep their own fixed conventions. NULL (default) defers to
+#'   \code{joutput()}'s \code{digits} setting (default 3).
 #' @param case.processing.detail Per-call override of the Case
 #'   Processing Summary detail tier: one of \code{"none"},
 #'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
@@ -7346,7 +7510,9 @@ jt <- function(formula, data, paired = FALSE, welch = FALSE,
 jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
                  effect.size = NULL, levene = NULL, ci = NULL,
                  subset = NULL, variable.id = NULL, value.id = NULL,
-                 case.processing.detail = NULL, full = FALSE) {
+                 case.processing.detail = NULL, full = FALSE, digits = NULL) {
+
+  digits_n <- .jst_resolve_digits(digits)
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -7486,7 +7652,7 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
     abs_devs      <- abs(dv_vals - group_means[group_factor])
     levene_model  <- stats::aov(abs_devs ~ group_factor)
     levene_result <- summary(levene_model)[[1]]
-    levene_f      <- round(levene_result$`F value`[1], 3)
+    levene_f      <- round(levene_result$`F value`[1], digits_n)
     levene_p      <- levene_result$`Pr(>F)`[1]
     levene_p_fmt  <- if (!is.na(levene_p) && levene_p < 0.001) "<.001" else sprintf("%.3f", levene_p)
 
@@ -7543,16 +7709,16 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
     row <- data.frame(
       Group = group_label,
       N     = n,
-      Mean  = round(m, 3),
-      SD    = round(s, 3),
+      Mean  = round(m, digits_n),
+      SD    = round(s, digits_n),
       stringsAsFactors = FALSE
     )
 
     if (ci) {
       se     <- s / sqrt(n)
       t_crit <- stats::qt(0.975, df = n - 1)
-      row$CI_Lower <- round(m - t_crit * se, 3)
-      row$CI_Upper <- round(m + t_crit * se, 3)
+      row$CI_Lower <- round(m - t_crit * se, digits_n)
+      row$CI_Upper <- round(m + t_crit * se, digits_n)
     }
 
     row
@@ -7579,7 +7745,7 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
     p_fmt <- if (!is.na(p_val) && p_val < 0.001) "<.001" else sprintf("%.3f", p_val)
 
     welch_table <- data.frame(
-      F_value = round(model$statistic, 3),
+      F_value = round(model$statistic, digits_n),
       df1     = round(model$parameter[1], 1),
       df2     = round(model$parameter[2], 1),
       p_value = p_fmt,
@@ -7606,7 +7772,7 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
     eta_sq      <- temp_result$`Sum Sq`[1] / sum(temp_result$`Sum Sq`)
 
     if (effect.size) {
-      cat("\nEta-squared:", round(eta_sq, 3), "\n")
+      cat("\nEta-squared:", round(eta_sq, digits_n), "\n")
       cat("(Note: Eta-squared is calculated from the traditional SS decomposition.)\n")
     }
 
@@ -7629,9 +7795,9 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
     anova_table <- data.frame(
       Source         = c(group_disp, "Residual", "Total"),
       df             = c(result$Df, total_df),
-      Sum_of_Squares = round(c(result$`Sum Sq`, total_ss), 3),
-      Mean_Square    = c(round(result$`Mean Sq`, 3), NA),
-      F_value        = c(round(result$`F value`[1], 3), NA, NA),
+      Sum_of_Squares = round(c(result$`Sum Sq`, total_ss), digits_n),
+      Mean_Square    = c(round(result$`Mean Sq`, digits_n), NA),
+      F_value        = c(round(result$`F value`[1], digits_n), NA, NA),
       p_value        = c(p_fmt, NA, NA),
       stringsAsFactors = FALSE
     )
@@ -7646,7 +7812,7 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
     eta_sq <- result$`Sum Sq`[1] / sum(result$`Sum Sq`)
 
     if (effect.size) {
-      cat("\nEta-squared:", round(eta_sq, 3), "\n")
+      cat("\nEta-squared:", round(eta_sq, digits_n), "\n")
     }
 
     if (posthoc) {
@@ -7659,9 +7825,9 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
 
       tukey_table <- data.frame(
         Comparison = rownames(tukey_result),
-        Difference = round(tukey_result$diff, 3),
-        CI_Lower   = round(tukey_result$lwr,  3),
-        CI_Upper   = round(tukey_result$upr,  3),
+        Difference = round(tukey_result$diff, digits_n),
+        CI_Lower   = round(tukey_result$lwr,  digits_n),
+        CI_Upper   = round(tukey_result$upr,  digits_n),
         p_adj      = tukey_p_fmt,
         stringsAsFactors = FALSE,
         row.names  = NULL
@@ -7778,6 +7944,12 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
 #'
 #' @importFrom stats chisq.test
 #' @export
+#' @param digits Integer or NULL. Number of decimal places for continuous
+#'   statistics in the output tables (range 0-7; \code{digits = 0} prints
+#'   whole numbers with no trailing decimal point). Does not affect p-values,
+#'   percentages, or integer quantities (counts, N, degrees of freedom),
+#'   which keep their own fixed conventions. NULL (default) defers to
+#'   \code{joutput()}'s \code{digits} setting (default 3).
 #' @param case.processing.detail Per-call override of the Case
 #'   Processing Summary detail tier: one of \code{"none"},
 #'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
@@ -7785,7 +7957,9 @@ jaov <- function(formula, data, welch = FALSE, posthoc = NULL,
 jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
                       row.pct = TRUE, col.pct = FALSE, subset = NULL,
                       variable.id = NULL, value.id = NULL,
-                      case.processing.detail = NULL) {
+                      case.processing.detail = NULL, digits = NULL) {
+
+  digits_n <- .jst_resolve_digits(digits)
 
   # Resolve default data frame if not specified
   .jst_default_used <- FALSE
@@ -7969,7 +8143,7 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
   # Chi-square test (only if requested)
   if (chisq) {
     chi_table <- data.frame(
-      Chi_Square = round(chi_result$statistic, 3),
+      Chi_Square = round(chi_result$statistic, digits_n),
       df         = chi_result$parameter,
       p          = p_fmt,
       N          = grand_total,
@@ -8049,6 +8223,10 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
 #'   with a legend mode otherwise); \code{"legend"}/\code{"legend.bottom"}
 #'   keep names and print a label legend after the table. NULL (default)
 #'   defers to \code{joutput()}'s \code{variable.id} setting. Not a logical.
+#' @param value.id Not supported by \code{jcorr()}. The function does not
+#'   display value labels, so passing this argument is an error. It exists
+#'   only to return a clear message rather than misreporting the token as a
+#'   missing variable. Leave at NULL (default).
 #'
 #' @return Invisibly returns a list of class \code{jst_corr} containing:
 #'   \code{r} (correlation matrix), \code{p} (p-value matrix),
@@ -8070,12 +8248,31 @@ jcrosstab <- function(formula, data, chisq = FALSE, expected = FALSE,
 #'
 #' @importFrom stats cor.test complete.cases
 #' @export
+#' @param digits Integer or NULL. Number of decimal places for continuous
+#'   statistics in the output tables (range 0-7; \code{digits = 0} prints
+#'   whole numbers with no trailing decimal point). Does not affect p-values,
+#'   percentages, or integer quantities (counts, N, degrees of freedom),
+#'   which keep their own fixed conventions. NULL (default) defers to
+#'   \code{joutput()}'s \code{digits} setting (default 3).
 #' @param case.processing.detail Per-call override of the Case
 #'   Processing Summary detail tier: one of \code{"none"},
 #'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
 #'   uses the active \code{joutput()} level default.
 jcorr <- function(data, ..., method = "pearson", subset = NULL, variable.id = NULL,
-                  case.processing.detail = NULL) {
+                  value.id = NULL, case.processing.detail = NULL, digits = NULL) {
+
+  digits_n <- .jst_resolve_digits(digits)
+
+  # jcorr has no per-code surface to display value labels on (its per-pair Ns
+  # live in the matrix, not a value legend), so value.id is accepted only to
+  # give an explicit, accurate error rather than the misleading "variable not
+  # found: <token>" that resulted when the token fell into the dots. A global
+  # joutput(value.id=) never arrives here as a per-call arg, so a non-NULL
+  # value.id can only be an explicit per-call argument. (Session 62, Option A)
+  if (!is.null(value.id)) {
+    stop("value.id is not supported by jcorr(); it does not display ",
+         "value labels.", call. = FALSE)
+  }
 
   # Resolve the first argument: explicit data frame, juse default,
   # or bare-symbol-as-variable-name (leading comma omitted).
@@ -8215,7 +8412,7 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, variable.id = NU
       if (i == j) {
         display[i, j] <- "1"
       } else if (j < i) {
-        r_fmt <- sprintf("%.3f", r_matrix[i, j])
+        r_fmt <- sprintf(paste0("%.", digits_n, "f"), r_matrix[i, j])
         p_fmt <- if (!is.na(p_matrix[i, j]) && p_matrix[i, j] < 0.001) {
           "<.001"
         } else {
@@ -8896,6 +9093,12 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, variable.id = NU
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
+#' @param digits Integer or NULL. Number of decimal places for continuous
+#'   statistics in the output tables (range 0-7; \code{digits = 0} prints
+#'   whole numbers with no trailing decimal point). Does not affect p-values,
+#'   percentages, or integer quantities (counts, N, degrees of freedom),
+#'   which keep their own fixed conventions. NULL (default) defers to
+#'   \code{joutput()}'s \code{digits} setting (default 3).
 #' @param case.processing.detail Per-call override of the Case
 #'   Processing Summary detail tier: one of \code{"none"},
 #'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
@@ -8903,7 +9106,7 @@ jcorr <- function(data, ..., method = "pearson", subset = NULL, variable.id = NU
 jlm <- function(formula, data, subset = NULL, variable.id = NULL,
                 numeric = NULL, categorical = NULL,
                 diagnostics = NULL, full = FALSE,
-                case.processing.detail = NULL, ...) {
+                case.processing.detail = NULL, digits = NULL, ...) {
 
   .jst_check_args(
     list(...),
@@ -8941,6 +9144,7 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
   # coefficient-row terms (display only). See below.
   vlmode               <- .jst_resolve_variable_id(variable.id)
   show_ref_categories  <- .jst_resolve_toggle("ref.categories",  NULL)
+  digits_n             <- .jst_resolve_digits(digits)
   # Pre-conversion label source for "labels"/legend display: captured before
   # the variable-type conversion below coerces haven-labelled IVs to numeric
   # or factor (which would drop their variable labels). Frozen by
@@ -9441,7 +9645,10 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
   p_fmt <- ifelse(!is.na(p_num) & p_num < 0.001, "<.001",
                   ifelse(is.na(p_num), "<.001", sprintf("%.3f", p_num)))
 
-  fmt3 <- function(x) sprintf("%.3f", as.numeric(x))
+  # Continuous-statistic formatter honoring the joutput `digits` setting
+  # (coefficients, SEs, t, standardized beta). P-values keep their own
+  # fixed convention (above).
+  fmt3 <- function(x) sprintf(paste0("%.", digits_n, "f"), as.numeric(x))
 
   # Clean up factor coefficient names for readability
   rownames(coefs) <- .jst_clean_coef_names(rownames(coefs), data,
@@ -9451,28 +9658,31 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
     b       = fmt3(coefs$b),
     StdErr  = fmt3(coefs$StdErr),
     t       = fmt3(coefs$t),
-    Beta    = ifelse(is.na(std_b), "", sprintf("%.3f", as.numeric(std_b))),
+    Beta    = ifelse(is.na(std_b), "",
+                     sprintf(paste0("%.", digits_n, "f"), as.numeric(std_b))),
     P       = p_fmt,
     stringsAsFactors = FALSE,
     row.names = rownames(coefs)
   )
 
-  r_squared     <- round(model_summary$r.squared, 3)
-  adj_r_squared <- round(model_summary$adj.r.squared, 3)
-  residual_se   <- round(model_summary$sigma, 3)
+  r_squared     <- round(model_summary$r.squared, digits_n)
+  adj_r_squared <- round(model_summary$adj.r.squared, digits_n)
+  residual_se   <- round(model_summary$sigma, digits_n)
 
   f_stat  <- model_summary$fstatistic
-  f_value <- round(unname(f_stat[1]), 3)
   df1     <- unname(f_stat[2])
   df2     <- unname(f_stat[3])
-  f_p     <- stats::pf(f_value, df1, df2, lower.tail = FALSE)
+  # Compute the F p-value from the full-precision F (NOT the display-rounded
+  # value) so it never depends on the digits setting.
+  f_p     <- stats::pf(unname(f_stat[1]), df1, df2, lower.tail = FALSE)
   f_p_fmt <- ifelse(is.na(f_p) | f_p < 0.001, "<.001", sprintf("%.3f", f_p))
+  f_value <- round(unname(f_stat[1]), digits_n)
 
   n_obs         <- stats::nobs(model)
   y             <- stats::model.response(mf)
-  ss_total      <- round(sum((y - mean(y))^2), 3)
-  ss_regression <- round(sum((stats::fitted(model) - mean(y))^2), 3)
-  ss_residual   <- round(sum(stats::residuals(model)^2), 3)
+  ss_total      <- round(sum((y - mean(y))^2), digits_n)
+  ss_regression <- round(sum((stats::fitted(model) - mean(y))^2), digits_n)
+  ss_residual   <- round(sum(stats::residuals(model)^2), digits_n)
 
   if (any(is.na(stats::coef(model)))) {
     cat("\nWARNING: One or more variables have been removed from the model due to collinearity.\n")
@@ -9498,6 +9708,11 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
     rownames(out_coefs_disp) <- .jst_relabel_coef_names(
       rownames(out_coefs), lab_src, all.vars(formula)[-1])
   }
+  # Always-on model header: name the outcome on the line directly above the
+  # Coefficients table (it heads that table; predictors are its rows). The
+  # label-bearing, role-grouped roster is the variable.id legend block.
+  # (Session 62; placement settled Session 63)
+  cat("Outcome: ", original_formula_vars[1], "\n", sep = "")
   .jst_print_table(out_coefs_disp,
                    caption   = "Coefficients",
                    col.names = c("b", "SE", "t", "\u03b2", "p"),
@@ -9507,19 +9722,19 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
   # "legend" (mid): between the Coefficients table and the R-squared/fit block.
   if (identical(vlmode, "legend")) {
     cat("\n")
-    .print_var_labels(lab_src, all.vars(formula))
+    .print_model_var_labels(lab_src, original_formula_vars[1], original_formula_vars[-1])
   }
 
-  cat("\nR-squared: ", sprintf("%.3f", r_squared),
-      "    Adjusted R-squared: ", sprintf("%.3f", adj_r_squared), "\n", sep = "")
-  cat("Residual Standard Error: ", sprintf("%.3f", residual_se), "\n", sep = "")
-  cat("\nF-statistic: ", sprintf("%.3f", f_value),
+  cat("\nR-squared: ", sprintf(paste0("%.", digits_n, "f"), r_squared),
+      "    Adjusted R-squared: ", sprintf(paste0("%.", digits_n, "f"), adj_r_squared), "\n", sep = "")
+  cat("Residual Standard Error: ", sprintf(paste0("%.", digits_n, "f"), residual_se), "\n", sep = "")
+  cat("\nF-statistic: ", sprintf(paste0("%.", digits_n, "f"), f_value),
       " on ", df1, " and ", df2,
       " DF, p-value: ", f_p_fmt, "\n", sep = "")
   cat("Sum of Squares:\n")
-  cat("  Regression: ", sprintf("%.3f", ss_regression), "\n", sep = "")
-  cat("  Residual:   ", sprintf("%.3f", ss_residual),   "\n", sep = "")
-  cat("  Total:      ", sprintf("%.3f", ss_total),      "\n", sep = "")
+  cat("  Regression: ", sprintf(paste0("%.", digits_n, "f"), ss_regression), "\n", sep = "")
+  cat("  Residual:   ", sprintf(paste0("%.", digits_n, "f"), ss_residual),   "\n", sep = "")
+  cat("  Total:      ", sprintf(paste0("%.", digits_n, "f"), ss_total),      "\n", sep = "")
 
   # -- Diagnostics (VIF + plots) --------------------------------------------
   vif_values <- NULL
@@ -9584,7 +9799,7 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
   # "legend.bottom": one consolidated legend at the very end of the output.
   if (identical(vlmode, "legend.bottom")) {
     cat("\n")
-    .print_var_labels(lab_src, all.vars(formula))
+    .print_model_var_labels(lab_src, original_formula_vars[1], original_formula_vars[-1])
   }
 
   ret <- list(
@@ -9640,8 +9855,8 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
 #'   \code{"both"} shows \code{"name: label"};
 #'   \code{"labels"} replaces each coefficient's variable name with its label
 #'   in the Coefficients table (factor level decoration is preserved) -- best
-#'   for short labels; \code{"legend"} prints a label legend between the
-#'   Model Summary (fit) block and the Coefficients table;
+#'   for short labels; \code{"legend"} prints a label legend just below the
+#'   Coefficients table (at the coefficients/fit seam);
 #'   \code{"legend.bottom"} prints it at the very end. NULL (default) defers
 #'   to \code{joutput()}'s \code{variable.id} setting. Not a logical.
 #' @param numeric Optional character vector of variable names to treat
@@ -9718,6 +9933,12 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
 #'
 #' @export
 #' @importFrom stats glm binomial pchisq logLik as.formula
+#' @param digits Integer or NULL. Number of decimal places for continuous
+#'   statistics in the output tables (range 0-7; \code{digits = 0} prints
+#'   whole numbers with no trailing decimal point). Does not affect p-values,
+#'   percentages, or integer quantities (counts, N, degrees of freedom),
+#'   which keep their own fixed conventions. NULL (default) defers to
+#'   \code{joutput()}'s \code{digits} setting (default 3).
 #' @param case.processing.detail Per-call override of the Case
 #'   Processing Summary detail tier: one of \code{"none"},
 #'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
@@ -9726,7 +9947,7 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
                       numeric = NULL, categorical = NULL,
                       ci = NULL, classification = FALSE,
                       diagnostics = NULL, full = FALSE,
-                      case.processing.detail = NULL, ...) {
+                      case.processing.detail = NULL, digits = NULL, ...) {
 
   .jst_check_args(
     list(...),
@@ -10060,10 +10281,11 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
   .jst_print_case_processing(sample_info, analysis_type = "listwise", detail = case.processing.detail)
 
   # Variable label display mode. jlogistic is a distinct layout: "legend"
-  # prints between the Model Summary (fit) block and the Coefficients table;
-  # "legend.bottom" at the very end; "labels" relabels coefficient-row terms
-  # (display only).
+  # prints just below the Coefficients table (at the coefficients/fit seam,
+  # mirroring jlm); "legend.bottom" at the very end; "labels" relabels
+  # coefficient-row terms (display only).
   vlmode <- .jst_resolve_variable_id(variable.id)
+  digits_n <- .jst_resolve_digits(digits)
 
   # Capture DV label for "1" category (before model fitting, more reliable)
   dv_label_1 <- NULL
@@ -10088,7 +10310,7 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
 
   # -- What does the model predict? ------------------------------------------
   predicts_str <- if (!is.null(dv_label_1)) dv_label_1 else "1"
-  cat("Model predicts: ", predicts_str, "\n\n", sep = "")
+  cat("Model predicts: ", predicts_str, "\n", sep = "")
 
   # -- Omnibus test (model vs null) ------------------------------------------
   null_model  <- stats::glm(as.formula(paste(dv_name, "~ 1")),
@@ -10106,18 +10328,15 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
   }
 
   omnibus_table <- data.frame(
-    Chi_Square = round(chi_sq, 3),
+    Chi_Square = round(chi_sq, digits_n),
     df         = omnibus_df,
     p          = omnibus_fmt,
     stringsAsFactors = FALSE,
     row.names = NULL
   )
-
-  .jst_print_table(omnibus_table,
-                   caption = "Omnibus Test of Model Coefficients",
-                   col.names = c("Chi-Square", "df", "p"),
-                   row.names = FALSE)
-  cat("\n")
+  # (Omnibus table is printed below, after the Coefficients table -- the
+  # fit block follows the coefficients in the coefficient-first layout.
+  # Session 63.)
 
   # -- Model summary --------------------------------------------------------
   neg2ll       <- -2 * ll_model
@@ -10127,24 +10346,16 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
   nagelkerke_r2 <- cox_snell_r2 / max_r2
 
   summary_table <- data.frame(
-    neg2LL     = round(neg2ll, 3),
-    CoxSnellR2 = round(cox_snell_r2, 3),
-    NagelkerkeR2 = round(nagelkerke_r2, 3),
-    AIC        = round(aic, 3),
+    neg2LL     = round(neg2ll, digits_n),
+    CoxSnellR2 = round(cox_snell_r2, digits_n),
+    NagelkerkeR2 = round(nagelkerke_r2, digits_n),
+    AIC        = round(aic, digits_n),
     stringsAsFactors = FALSE,
     row.names = NULL
   )
-
-  .jst_print_table(summary_table,
-                   caption = "Model Summary",
-                   col.names = c("-2 Log Likelihood", "Cox & Snell R\u00b2",
-                                 "Nagelkerke R\u00b2", "AIC"),
-                   row.names = FALSE)
-  cat("\n")
-
-  # "legend" (mid): between the fit (Model Summary) block and the Coefficients
-  # table -- the same coefficients/fit boundary jlm uses, here above the table.
-  if (identical(vlmode, "legend")) .print_var_labels(lab_src, all.vars(formula))
+  # (Model Summary table is printed below, after the Coefficients table.
+  # The variable.id "legend" roster also prints there -- at the new
+  # coefficients/fit seam -- mirroring jlm. Session 63.)
 
   # -- Coefficients table ----------------------------------------------------
   coefs    <- as.data.frame(model_summary$coefficients, stringsAsFactors = FALSE)
@@ -10159,7 +10370,10 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
 
   exp_b <- exp(coefs$b)
 
-  fmt3 <- function(x) sprintf("%.3f", as.numeric(x))
+  # Continuous-statistic formatter honoring the joutput `digits` setting
+  # (coefficients, SEs, Wald, Exp(B), CI bounds). The Wald p-value and df
+  # keep their own fixed conventions.
+  fmt3 <- function(x) sprintf(paste0("%.", digits_n, "f"), as.numeric(x))
 
   # Clean up factor coefficient names for readability
   rownames(coefs) <- .jst_clean_coef_names(rownames(coefs), data,
@@ -10193,13 +10407,40 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
     rownames(out_coefs_disp) <- .jst_relabel_coef_names(
       rownames(out_coefs), lab_src, all.vars(formula)[-1])
   }
+  # Always-on model header: name the outcome on the line directly above the
+  # Coefficients table (it heads that table; predictors are its rows). The
+  # event-level annotation is deferred to the value.id outcome-level work; the
+  # label-bearing roster is the variable.id legend block. (Session 62;
+  # placement settled Session 63)
+  cat("Outcome: ", original_formula_vars[1], "\n", sep = "")
   .jst_print_table(out_coefs_disp,
                    caption   = "Coefficients",
                    col.names = col_names,
                    align     = rep("d", length(col_names)),
                    row.names = TRUE)
 
-  cat("\nNumber of observations: ", n_obs, "\n", sep = "")
+  # -- Fit block (coefficient-first layout: prints after the Coefficients
+  # table). The variable.id "legend" roster sits at this coefficients/fit
+  # seam, mirroring jlm. (Session 63)
+  if (identical(vlmode, "legend")) {
+    cat("\n")
+    .print_model_var_labels(lab_src, original_formula_vars[1], original_formula_vars[-1])
+    # the roster's trailing blank line doubles as the separator before the
+    # fit block, so no extra blank is emitted here.
+  } else {
+    cat("\n")
+  }
+  .jst_print_table(omnibus_table,
+                   caption = "Omnibus Test of Model Coefficients",
+                   col.names = c("Chi-Square", "df", "p"),
+                   row.names = FALSE)
+  cat("\n")
+  .jst_print_table(summary_table,
+                   caption = "Model Summary",
+                   col.names = c("-2 Log Likelihood", "Cox & Snell R\u00b2",
+                                 "Nagelkerke R\u00b2", "AIC"),
+                   row.names = FALSE)
+  cat("\n")
 
   # -- Classification table (optional) ---------------------------------------
   if (classification) {
@@ -10293,7 +10534,7 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
   cat("\n")
 
   # "legend.bottom": one consolidated legend at the very end of the output.
-  if (identical(vlmode, "legend.bottom")) .print_var_labels(lab_src, all.vars(formula))
+  if (identical(vlmode, "legend.bottom")) .print_model_var_labels(lab_src, original_formula_vars[1], original_formula_vars[-1])
 
   ret <- list(
     model           = model,
@@ -10360,6 +10601,10 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
 #'   \code{"legend"}/\code{"legend.bottom"} keep names and print a label
 #'   legend after the final table. NULL (default) defers to \code{joutput()}'s
 #'   \code{variable.id} setting. Not a logical.
+#' @param value.id Not supported by \code{jalpha()}. The function does not
+#'   display value labels, so passing this argument is an error. It exists
+#'   only to return a clear message rather than misreporting the token as a
+#'   missing variable. Leave at NULL (default).
 #'
 #' @return Invisibly returns a list of class \code{jst_alpha} containing:
 #'   \code{alpha} (Cronbach's alpha), \code{n_items}, \code{n_used},
@@ -10379,12 +10624,32 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
 #'   workflow conventions, and complete function listing.
 #'
 #' @export
+#' @param digits Integer or NULL. Number of decimal places for continuous
+#'   statistics in the output tables (range 0-7; \code{digits = 0} prints
+#'   whole numbers with no trailing decimal point). Does not affect p-values,
+#'   percentages, or integer quantities (counts, N, degrees of freedom),
+#'   which keep their own fixed conventions. NULL (default) defers to
+#'   \code{joutput()}'s \code{digits} setting (default 3).
 #' @param case.processing.detail Per-call override of the Case
 #'   Processing Summary detail tier: one of \code{"none"},
 #'   \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
 #'   uses the active \code{joutput()} level default.
 jalpha <- function(data, ..., subset = NULL, variable.id = NULL,
-                   case.processing.detail = NULL) {
+                   value.id = NULL, case.processing.detail = NULL,
+                   digits = NULL) {
+
+  digits_n <- .jst_resolve_digits(digits)
+
+  # jalpha has no per-code surface to display value labels on, so value.id is
+  # accepted only to give an explicit, accurate error rather than the
+  # misleading "variable not found: <token>" that resulted when the token fell
+  # into the dots. A global joutput(value.id=) never arrives here as a per-call
+  # arg, so a non-NULL value.id can only be an explicit per-call argument.
+  # (Session 62, Option A)
+  if (!is.null(value.id)) {
+    stop("value.id is not supported by jalpha(); it does not display ",
+         "value labels.", call. = FALSE)
+  }
 
   # Resolve the first argument: explicit data frame, juse default,
   # or bare-symbol-as-variable-name (leading comma omitted).
@@ -10462,7 +10727,7 @@ jalpha <- function(data, ..., subset = NULL, variable.id = NULL,
   k             <- ncol(items_complete)
   item_vars     <- sapply(items_complete, stats::var)
   total_var     <- stats::var(rowSums(items_complete))
-  alpha_overall <- round((k / (k - 1)) * (1 - sum(item_vars) / total_var), 3)
+  alpha_overall <- round((k / (k - 1)) * (1 - sum(item_vars) / total_var), digits_n)
 
   alpha_table <- data.frame(
     Alpha   = alpha_overall,
@@ -10494,8 +10759,8 @@ jalpha <- function(data, ..., subset = NULL, variable.id = NULL,
   # Item Statistics
   item_stats <- data.frame(
     Item = variable_names,
-    Mean = round(colMeans(items_complete), 3),
-    SD   = round(sapply(items_complete, stats::sd), 3),
+    Mean = round(colMeans(items_complete), digits_n),
+    SD   = round(sapply(items_complete, stats::sd), digits_n),
     N    = n_used,
     stringsAsFactors = FALSE,
     row.names = NULL
@@ -10515,7 +10780,7 @@ jalpha <- function(data, ..., subset = NULL, variable.id = NULL,
     item_name   <- variable_names[i]
     item_col    <- items_complete[[i]]
     rest_total  <- total_scores - item_col
-    r_corrected <- round(stats::cor(item_col, rest_total), 3)
+    r_corrected <- round(stats::cor(item_col, rest_total), digits_n)
 
     remaining <- items_complete[, -i, drop = FALSE]
     k_r <- ncol(remaining)
@@ -10524,7 +10789,7 @@ jalpha <- function(data, ..., subset = NULL, variable.id = NULL,
     } else {
       item_vars_r <- sapply(remaining, stats::var)
       total_var_r <- stats::var(rowSums(remaining))
-      round((k_r / (k_r - 1)) * (1 - sum(item_vars_r) / total_var_r), 3)
+      round((k_r / (k_r - 1)) * (1 - sum(item_vars_r) / total_var_r), digits_n)
     }
 
     data.frame(

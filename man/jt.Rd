@@ -16,7 +16,8 @@ jt(
   variable.id = NULL,
   value.id = NULL,
   case.processing.detail = NULL,
-  full = FALSE
+  full = FALSE,
+  digits = NULL
 )
 }
 \arguments{
@@ -73,6 +74,13 @@ uses the active \code{joutput()} level default.}
 
 \item{full}{Logical. If TRUE, turns on effect.size, levene, and ci
 all at once. Does not override explicit FALSE values.}
+
+\item{digits}{Integer or NULL. Number of decimal places for continuous
+statistics in the output tables (range 0-7; \code{digits = 0} prints
+whole numbers with no trailing decimal point). Does not affect p-values,
+percentages, or integer quantities (counts, N, degrees of freedom),
+which keep their own fixed conventions. NULL (default) defers to
+\code{joutput()}'s \code{digits} setting (default 3).}
 }
 \value{
 Invisibly returns a list of class \code{jst_ttest} containing:

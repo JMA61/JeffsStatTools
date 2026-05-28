@@ -9,7 +9,9 @@ jalpha(
   ...,
   subset = NULL,
   variable.id = NULL,
-  case.processing.detail = NULL
+  value.id = NULL,
+  case.processing.detail = NULL,
+  digits = NULL
 )
 }
 \arguments{
@@ -32,10 +34,22 @@ returned tables and the reverse-coding diagnostic keep variable names);
 legend after the final table. NULL (default) defers to \code{joutput()}'s
 \code{variable.id} setting. Not a logical.}
 
+\item{value.id}{Not supported by \code{jalpha()}. The function does not
+display value labels, so passing this argument is an error. It exists
+only to return a clear message rather than misreporting the token as a
+missing variable. Leave at NULL (default).}
+
 \item{case.processing.detail}{Per-call override of the Case
 Processing Summary detail tier: one of \code{"none"},
 \code{"totals"}, or \code{"per_code"}. \code{NULL} (default)
 uses the active \code{joutput()} level default.}
+
+\item{digits}{Integer or NULL. Number of decimal places for continuous
+statistics in the output tables (range 0-7; \code{digits = 0} prints
+whole numbers with no trailing decimal point). Does not affect p-values,
+percentages, or integer quantities (counts, N, degrees of freedom),
+which keep their own fixed conventions. NULL (default) defers to
+\code{joutput()}'s \code{digits} setting (default 3).}
 }
 \value{
 Invisibly returns a list of class \code{jst_alpha} containing:

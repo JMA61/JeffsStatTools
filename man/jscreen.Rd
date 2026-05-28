@@ -10,6 +10,7 @@ jscreen(
   outlier.sd = 3,
   subset = NULL,
   variable.id = NULL,
+  value.id = NULL,
   types = TRUE,
   issues = TRUE,
   r.type = FALSE
@@ -37,6 +38,11 @@ jcomplete and jsubset. Does not affect other function calls.}
 short labels); \code{"legend"} and \code{"legend.bottom"} keep names and
 print a label legend after the tables. NULL (default) defers to
 \code{joutput()}'s \code{variable.id} setting. Not a logical.}
+
+\item{value.id}{Not supported by \code{jscreen()}. The function does not
+display value labels, so passing this argument is an error. It exists
+only to return a clear message rather than misreporting the token as a
+missing variable. Leave at NULL (default).}
 
 \item{types}{Logical. If TRUE (default), prints the Variable Types table.
 Set FALSE to suppress it.}

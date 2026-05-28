@@ -17,6 +17,7 @@ joutput(
   value.id = NULL,
   ref.categories = NULL,
   udm.notice = NULL,
+  digits = NULL,
   quiet = FALSE
 )
 }
@@ -117,6 +118,13 @@ load that involves UDM-bearing variables; \code{FALSE} suppresses
 it entirely; \code{NULL} ("auto") prints it only the first time
 in a session, then suppresses it. Standard level uses \code{NULL}
 (auto), minimal uses \code{FALSE}, full uses \code{TRUE}.}
+
+\item{digits}{Integer or NULL. Number of decimal places shown for
+continuous statistics in the analysis-function output tables
+(range 0-7; \code{digits = 0} prints whole numbers with no
+trailing decimal point). Does not affect p-values, percentages,
+or integer quantities (counts, N, degrees of freedom), which keep
+their own fixed conventions. All three preset levels default to 3.}
 
 \item{quiet}{Logical; default FALSE. When TRUE, joutput() applies the
 level/toggle change silently (the status panel is not printed). A bare
