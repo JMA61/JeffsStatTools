@@ -501,9 +501,15 @@
     cat(header_prefix, caption, "\n", sep = "")
   }
 
+  # Decimal-tab columns ("d"): right-justify data so a uniform-dp column
+  # aligns on the decimal point, while the header stays centered over
+  # the column. Resolve "d" here; fmt_cell never sees "d".
+  header_align <- ifelse(align == "d", "c", align)
+  data_align   <- ifelse(align == "d", "r", align)
+
   # Header
   header_cells <- vapply(seq_len(n_cols), function(j) {
-    fmt_cell(headers[j], col_widths[j], align[j])
+    fmt_cell(headers[j], col_widths[j], header_align[j])
   }, character(1))
   cat(header_prefix, paste(header_cells, collapse = gap), "\n", sep = "")
 
@@ -516,7 +522,7 @@
   # Data rows
   for (i in seq_len(n_rows)) {
     row_cells <- vapply(seq_len(n_cols), function(j) {
-      fmt_cell(display[i, j], col_widths[j], align[j])
+      fmt_cell(display[i, j], col_widths[j], data_align[j])
     }, character(1))
     cat(prefix, paste(row_cells, collapse = gap), "\n", sep = "")
   }
@@ -9495,7 +9501,7 @@ jlm <- function(formula, data, subset = NULL, variable.id = NULL,
   .jst_print_table(out_coefs_disp,
                    caption   = "Coefficients",
                    col.names = c("b", "SE", "t", "\u03b2", "p"),
-                   align     = c("c", "c", "c", "c", "c"),
+                   align     = c("d", "d", "d", "d", "d"),
                    row.names = TRUE)
 
   # "legend" (mid): between the Coefficients table and the R-squared/fit block.
@@ -9944,7 +9950,7 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
   dv_vals     <- data[[dv_name]][!is.na(data[[dv_name]])]
   unique_vals <- sort(unique(dv_vals))
 
-  if (!identical(unique_vals, c(0, 1))) {
+  if (!(length(unique_vals) == 2L && all(unique_vals %in% c(0, 1)))) {
     # Determine what kind of problem it is
     n_unique <- length(unique_vals)
 
@@ -9981,9 +9987,11 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
       stop(paste0(
         "'", dv_name, "' is coded 1/2. Logistic regression requires 0/1 coding.\n",
         "Recode before running jlogistic():\n",
-        "  ", .jst_data_name, "$", dv_name, "R <- jrecode(, ", dv_name,
+        "  ", .jst_data_name, "$", dv_name, "R <- jrecode(", .jst_data_name, ", ", dv_name,
         ", map = \"1=0; 2=1\"", recode_labels, ")\n",
-        "Then use ", dv_name, "R as your dependent variable."
+        "Then use ", dv_name, "R as your dependent variable.\n",
+        "(jlogistic models the category coded 1; to model the other category ",
+        "instead, reverse the map and labels.)"
       ), call. = FALSE)
 
     } else if (length(coded_miss) > 0) {
@@ -9995,7 +10003,7 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
         "). The dependent variable must have exactly 2 categories coded 0/1.\n",
         "The value(s) ", miss_str, " may be coded missing value(s).\n",
         "Convert to NA before running jlogistic():\n",
-        "  ", .jst_data_name, "$", dv_name, "R <- jrecode(, ", dv_name,
+        "  ", .jst_data_name, "$", dv_name, "R <- jrecode(", .jst_data_name, ", ", dv_name,
         ", map = \"", paste0(coded_miss, "=NA", collapse = "; "),
         "; else=copy\")"
       ), call. = FALSE)
@@ -10188,7 +10196,7 @@ jlogistic <- function(formula, data, subset = NULL, variable.id = NULL,
   .jst_print_table(out_coefs_disp,
                    caption   = "Coefficients",
                    col.names = col_names,
-                   align     = rep("c", length(col_names)),
+                   align     = rep("d", length(col_names)),
                    row.names = TRUE)
 
   cat("\nNumber of observations: ", n_obs, "\n", sep = "")
