@@ -1,4 +1,4 @@
-# JeffsStatTools
+# JeffsStatTools <img src="logo.png" align="right" height="132" alt="jstats hex logo" />
 
 **Simplified, SPSS-style statistical analysis tools for R.**
 
