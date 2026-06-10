@@ -167,29 +167,22 @@
 
 # -- .onAttach -----------------------------------------------------------------
 #
-# Runs automatically on library(JeffsStatTools). Non-interactive sessions
-# (e.g., R CMD check, knitr builds) are silent.
+# This package has been renamed to `jstats` and is no longer maintained.
+# .onAttach announces the move; non-interactive sessions stay silent.
 
 .onAttach <- function(libname, pkgname) {
   if (!interactive()) return()
 
-  installed_ver <- as.character(utils::packageVersion("JeffsStatTools"))
-  gist_info     <- .jst_read_gist()
-
-  # If the gist says a successor exists, show migration message only.
-  # Otherwise, run the standard GitHub version check.
-  if (!is.null(gist_info) && !is.null(gist_info$successor)) {
-    .jst_show_migration(gist_info$successor, installed_ver)
-  } else {
-    .jst_show_version_status(installed_ver)
-  }
-
-  # Append any one-off broadcast message. Fires whether or not a
-  # successor is set, so it works for announcements before, during, or
-  # after a migration.
-  if (!is.null(gist_info) && !is.null(gist_info$message)) {
-    packageStartupMessage(gist_info$message)
-  }
+  packageStartupMessage(
+    "=======================================================\n",
+    " JeffsStatTools has been renamed to `jstats`.\n",
+    " This package is no longer maintained or updated.\n",
+    " To switch, run:\n",
+    "   detach('package:JeffsStatTools', unload = TRUE)\n",
+    "   remotes::install_github('JMA61/jstats', upgrade = 'never')\n",
+    "   library(jstats)\n",
+    "======================================================="
+  )
 }
 
 
