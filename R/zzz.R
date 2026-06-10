@@ -181,6 +181,7 @@
     "   detach('package:JeffsStatTools', unload = TRUE)\n",
     "   remotes::install_github('JMA61/jstats', upgrade = 'never')\n",
     "   library(jstats)\n",
+    "   remove.packages('JeffsStatTools')\n",
     "======================================================="
   )
 }
